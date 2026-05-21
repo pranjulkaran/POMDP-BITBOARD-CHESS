@@ -1,0 +1,29 @@
+PS D:\POMDP> g++ -O3 -std=c++20 main.cpp pomdp64.cpp -o pomdp64_sim
+PS D:\POMDP> .\pomdp64_sim.exe
+[POMDP-64] Diagnostic Initialization Initiated...
+[SYSTEM] Target State Footprint: 128 Bytes
+[STATUS] COMPLIANCE PASSED: Structural alignment exactly hits 128-byte cache-line target.
+
+--- DIAGNOSTIC DATA CHANNEL: TOTAL OCCUPANCY BLOCK ---
+8  1 1 1 1 1 1 1 1 
+7  1 1 1 1 1 1 1 1 
+6  0 0 0 0 0 0 0 0 
+5  0 0 0 0 0 0 0 0 
+4  0 0 0 0 0 0 0 0 
+3  0 0 0 0 0 0 0 0 
+2  1 1 1 1 1 1 1 1 
+1  1 1 1 1 1 1 1 1 
+   a b c d e f g h
+
+--- DIAGNOSTIC DATA CHANNEL: WHITE PAWNS STRUCT ---
+8  0 0 0 0 0 0 0 0 
+7  0 0 0 0 0 0 0 0 
+6  0 0 0 0 0 0 0 0 
+5  0 0 0 0 0 0 0 0 
+4  0 0 0 0 0 0 0 0 
+3  0 0 0 0 0 0 0 0 
+2  1 1 1 1 1 1 1 1 
+1  0 0 0 0 0 0 0 0 
+   a b c d e f g h
+
+[SYSTEM] Data query verification successful: Piece confirmed active at coordinate square e1.

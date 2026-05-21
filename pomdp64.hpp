@@ -1,12 +1,6 @@
 /**
  * @file pomdp64.hpp
- * @brief POMDP-64 Unified Structural Interface - The Markovian Void Protocol
- * @version 1.3.0
- * * SPECIFICATION COMPLIANCE:
- * - 128-Byte total GameState allocation split across two 64-byte L1 cache lines.
- * - Little-Endian Rank-File Mapping (LERF): Square a1 = Bit 0, h8 = Bit 63.
- * - Loopless, branch-free hardware accelerated sliding ray-cast resolution.
- * - Branch-free atomic state move-execution with unconditional capture gates.
+ * @brief Phase 4 Interface - Precomputed Step Offsets & Move Generation
  */
 
 #ifndef POMDP64_HPP
@@ -16,11 +10,9 @@
 
 namespace pomdp64 {
 
-// Color Identifiers
 constexpr int WHITE = 0;
 constexpr int BLACK = 1;
 
-// Granular Piece Array Registers
 constexpr int PAWN   = 0;
 constexpr int KNIGHT = 1;
 constexpr int BISHOP = 2;
@@ -28,89 +20,71 @@ constexpr int ROOK   = 3;
 constexpr int QUEEN  = 4;
 constexpr int KING   = 5;
 
-/**
- * @struct GameState
- * @brief 128-Byte contiguous state matrix aligned perfectly for L1/L2 cache locality.
- */
 struct alignas(64) GameState {
-    // Cache Line 1 (Offset Bytes 0 - 63)
     uint64_t pieces[2][6]; 
-
-    // Cache Line 2 (Offset Bytes 64 - 127)
-    alignas(8) uint64_t white_occ;    ///< Flattened bitmask footprint of all White pieces
-    alignas(8) uint64_t black_occ;    ///< Flattened bitmask footprint of all Black pieces
-    alignas(8) uint64_t total_occ;    ///< Global collision barrier map (white_occ | black_occ)
-    alignas(8) uint64_t metadata;     ///< System flags (Bit 0: Active Turn. 0=White, 1=Black)
+    alignas(8) uint64_t white_occ;    
+    alignas(8) uint64_t black_occ;    
+    alignas(8) uint64_t total_occ;    
+    alignas(8) uint64_t metadata;     
 };
 
 /**
- * @class Simulator
- * @brief Headless logic factory executing pure bitwise transformations over state space.
+ * @struct Move
+ * @brief Unmanaged 32-bit compact move payload representation.
  */
+struct Move {
+    uint8_t from;
+    uint8_t to;
+    uint8_t piece_type;
+    uint8_t flag; // Reserved for special actions (promotions, etc.)
+};
+
 class Simulator {
 private:
-    // Precomputed directional sliding ray tables (64 squares each)
+    // Sliding Ray Tables
     uint64_t ray_up[64];
     uint64_t ray_down[64];
     uint64_t ray_right[64];
     uint64_t ray_left[64];
-
     uint64_t ray_up_right[64];
     uint64_t ray_up_left[64];
     uint64_t ray_down_right[64];
     uint64_t ray_down_left[64];
 
-    /**
-     * @brief Populates the static 64-bit lookups once on simulation compilation instantiation.
-     */
+    // Non-sliding Step Tables
+    uint64_t knight_attacks[64];
+
     void init_ray_masks();
+    void init_step_masks();
 
 public:
     Simulator();
     ~Simulator() = default;
 
-    /**
-     * @brief Blasts the GameState registers back to the standard LERF initial layout.
-     */
     void reset_board(GameState& state);
-
-    /**
-     * @brief Collapses fine-grained registers into compressed global blocking barriers.
-     */
     inline void squash_occupancy(GameState& state);
-
-    /**
-     * @brief Mutates state space registers atomically via bitwise masking lanes.
-     */
     void make_move(GameState& state, int active_color, int piece_type, int source_square, int target_square);
-
-    /**
-     * @brief Resolves orthogonal sliding lines looplessly via hardware bit-scan lookups.
-     */
+    
     uint64_t get_rook_vision(int square, uint64_t total_occ) const;
-
-    /**
-     * @brief Resolves diagonal sliding lines looplessly via hardware bit-scan lookups.
-     */
     uint64_t get_bishop_vision(int square, uint64_t total_occ) const;
-
-    /**
-     * @brief Combines orthogonal and diagonal fields to yield true compound queen visibility.
-     */
+    
     inline uint64_t get_queen_vision(int square, uint64_t total_occ) const {
         return get_rook_vision(square, total_occ) | get_bishop_vision(square, total_occ);
     }
 
     /**
-     * @brief Utility coordinator conversion projecting File/Rank pairs to a raw LERF bit position index.
+     * @brief Pulls the precomputed Knight step matrix for a given square index.
      */
-    static inline uint64_t get_square_mask(int file, int rank) {
-        return 1ULL << ((rank * 8) + file);
+    inline uint64_t get_knight_attacks(int square) const {
+        return knight_attacks[square];
     }
 
     /**
-     * @brief Stream rendering utility to print 64-bit blocks as an 8x8 matrix display.
+     * @brief Populates a continuous stack list of valid pseudo-legal targets for an active side.
+     * @return Total count of moves stored inside the buffer pipeline.
      */
+    int generate_pseudo_moves(const GameState& state, int active_color, Move* move_list);
+
     void print_bitboard(uint64_t bitboard) const;
 };
 

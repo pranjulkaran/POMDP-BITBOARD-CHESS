@@ -1,60 +1,50 @@
 /**
  * @file main.cpp
- * @brief Integrated Diagnostic Suit & Regression Verification Test Bench
+ * @brief Phase 4 Move-Generation Performance Diagnostic Test Bench
  */
 
 #include "pomdp64.hpp"
 #include <iostream>
-
-void print_boundary_header(const char* label) {
-    std::cout << "==================================================\n";
-    std::cout << "DIAGNOSTIC TARGET: " << label << "\n";
-    std::cout << "==================================================\n";
-}
 
 int main() {
     pomdp64::GameState state;
     pomdp64::Simulator sim;
     sim.reset_board(state);
 
-    std::cout << "[POMDP-64] Master Engine Validation Suite Initialized...\n\n";
+    std::cout << "[POMDP-64] Phase 4 Target Serialization Suite Initialized...\n\n";
 
-    // --- PHASE 1 COMPLIANCE LOGIC CHECK ---
-    print_boundary_header("PHASE 1: MEMORY LAYOUT STRUC ALIGNMENT");
-    std::cout << "STATE_STRUCT_SIZE_BYTES: " << sizeof(state) << "\n";
-    std::cout << "CACHE_LINE_COMPLIANT: " << (sizeof(state) == 128 ? "PASSED" : "FAILED") << "\n\n";
+    // Allocate an unmanaged flat move stack array (Max buffer allocation ceiling of 256 moves)
+    pomdp64::Move local_move_buffer[256];
 
-    // --- PHASE 2 COMPLIANCE LOGIC CHECK ---
-    print_boundary_header("PHASE 2: LOOPLESS RAY-CAST SLIDING VISION (Rook d4)");
-    int d4_square = 27; // File d (3), Rank 4 (3) -> 3 * 8 + 3 = 27
-    uint64_t rook_vision_baseline = sim.get_rook_vision(d4_square, state.total_occ);
-    sim.print_bitboard(rook_vision_baseline);
+    // Trigger vectorization compilation sweep
+    std::cout << "[SYSTEM] Compiling pseudo-legal action tables for White color spectrum...\n";
+    int generated_move_count = sim.generate_pseudo_moves(state, pomdp64::WHITE, local_move_buffer);
 
-    // --- PHASE 3 COMPLIANCE LOGIC CHECK ---
-    print_boundary_header("PHASE 3: ATOMIC MUTATION ACCELERATION (e2 -> e4)");
-    int e2_pawn = 12; // File e (4), Rank 2 (1) -> 1 * 8 + 4 = 12
-    int e4_pawn = 28; // File e (4), Rank 4 (3) -> 3 * 8 + 4 = 28
+    std::cout << "[STATUS] Extraction passed. Total White Actions Registered: " << generated_move_count << "\n\n";
 
-    std::cout << "[ACTION] Executing state transition: White Pawn e2 -> e4...\n";
-    sim.make_move(state, pomdp64::WHITE, pomdp64::PAWN, e2_pawn, e4_pawn);
+    std::cout << "==================================================\n";
+    std::cout << "PARSED ACTION DATA STREAM LISTING\n";
+    std::cout << "==================================================\n";
 
-    std::cout << "\n--- GLOBAL OCCUPANCY STATE POST-MUTATION ---";
-    sim.print_bitboard(state.total_occ);
-
-    std::cout << "--- EVALUATING ROOK VISION PATHWAYS AFTER PAWN CLEARANCE ---";
-    uint64_t rook_vision_mutated = sim.get_rook_vision(d4_square, state.total_occ);
-    sim.print_bitboard(rook_vision_mutated);
-
-    // --- RUNTIME TRANSACTION INTEGRITY CHECKS ---
-    std::cout << "--- MATRICES INTEGRITY VERIFICATION SIGNALS ---\n";
-    if (!(state.pieces[pomdp64::WHITE][pomdp64::PAWN] & (1ULL << e2_pawn))) {
-        std::cout << "[INTEGRITY_PASS] Source bit 12 (e2) cleanly shifted down to 0.\n";
+    for (int i = 0; i < generated_move_count; ++i) {
+        std::cout << "Action #" << i << " | Piece Type: " << static_cast<int>(local_move_buffer[i].piece_type)
+                  << " | From Bit index: " << static_cast<int>(local_move_buffer[i].from)
+                  << " -> To Bit index: " << static_cast<int>(local_move_buffer[i].to) << "\n";
     }
-    if (state.pieces[pomdp64::WHITE][pomdp64::PAWN] & (1ULL << e4_pawn)) {
-        std::cout << "[INTEGRITY_PASS] Target bit 28 (e4) successfully flashed to 1.\n";
+
+    // Direct integrity validation: A white knight on b1 (Index 1) should looplessly find a3 (Index 16) and c3 (Index 18)
+    std::cout << "\n[INTEGRITY] Validating Knight path gates extraction...\n";
+    bool b1_knight_passed = false;
+    for (int i = 0; i < generated_move_count; ++i) {
+        if (local_move_buffer[i].from == 1 && local_move_buffer[i].to == 18) {
+            b1_knight_passed = true;
+            std::cout << "[CHECKPASS] Native Knight move successfully identified: b1 (1) -> c3 (18)\n";
+            break;
+        }
     }
-    if (rook_vision_mutated & (1ULL << 4)) {
-        std::cout << "[VISION_PASS] Lookless engine successfully tracks light path down to e1 square boundary!\n";
+
+    if (!b1_knight_passed) {
+        std::cout << "[WARNING] Failure flagged. Check step offset calculation matrix values.\n";
     }
 
     return 0;

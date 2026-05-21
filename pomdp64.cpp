@@ -1,11 +1,10 @@
 /**
  * @file pomdp64.cpp
- * @brief Phase 4 Implementation - Step Tables & Move Mask Serialization
+ * @brief Branch-Free and Loopless Bitwise Core Realizations for POMDP-64.
  */
 
 #include "pomdp64.hpp"
 #include <iostream>
-#include <cmath>
 
 namespace pomdp64 {
 
@@ -40,7 +39,6 @@ void Simulator::init_step_masks() {
         int file = s % 8;
         int rank = s / 8;
 
-        // All 8 possible Knight relative offset combinations
         int offsets[8][2] = {
             {2, 1}, {2, -1}, {-2, 1}, {-2, -1},
             {1, 2}, {1, -2}, {-1, 2}, {-1, -2}
@@ -96,6 +94,7 @@ inline void Simulator::squash_occupancy(GameState& state) {
 
 void Simulator::make_move(GameState& state, int active_color, int piece_type, int source_square, int target_square) {
     int opponent_color = 1 - active_color;
+
     state.pieces[active_color][piece_type] &= ~(1ULL << source_square);
 
     uint64_t capture_mask = ~(1ULL << target_square);
@@ -111,10 +110,76 @@ void Simulator::make_move(GameState& state, int active_color, int piece_type, in
 int Simulator::generate_pseudo_moves(const GameState& state, int active_color, Move* move_list) {
     int count = 0;
     uint64_t friendly_occ = (active_color == WHITE) ? state.white_occ : state.black_occ;
-    uint64_t target_filter = ~friendly_occ; // Complete filter gate eliminating teammate spaces
+    uint64_t enemy_occ    = (active_color == WHITE) ? state.black_occ : state.white_occ;
+    uint64_t target_filter = ~friendly_occ;
 
-    // Loop through target types supported in this generation block (Knights, Rooks)
-    for (int type = 0; type < 6; ++type) {
+    // 1. ASYMMETRIC PAWN PROCESSING PIPELINE
+    uint64_t pawns = state.pieces[active_color][PAWN];
+    
+    if (active_color == WHITE) {
+        uint64_t single_push = (pawns << 8) & ~state.total_occ;
+        uint64_t bitboard = single_push;
+        while (bitboard) {
+            int target_sq = __builtin_ctzll(bitboard);
+            move_list[count++] = Move{ static_cast<uint8_t>(target_sq - 8), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
+            bitboard &= (bitboard - 1);
+        }
+
+        uint64_t double_push = ((single_push & RANK_3) << 8) & ~state.total_occ;
+        while (double_push) {
+            int target_sq = __builtin_ctzll(double_push);
+            move_list[count++] = Move{ static_cast<uint8_t>(target_sq - 16), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
+            double_push &= (double_push - 1);
+        }
+
+        uint64_t cap_left = (pawns << 7) & NOT_FILE_H & enemy_occ;
+        while (cap_left) {
+            int target_sq = __builtin_ctzll(cap_left);
+            move_list[count++] = Move{ static_cast<uint8_t>(target_sq - 7), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
+            cap_left &= (cap_left - 1);
+        }
+
+        uint64_t cap_right = (pawns << 9) & NOT_FILE_A & enemy_occ;
+        while (cap_right) {
+            int target_sq = __builtin_ctzll(cap_right);
+            move_list[count++] = Move{ static_cast<uint8_t>(target_sq - 9), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
+            cap_right &= (cap_right - 1);
+        }
+    } 
+    else {
+        uint64_t single_push = (pawns >> 8) & ~state.total_occ;
+        uint64_t bitboard = single_push;
+        while (bitboard) {
+            int target_sq = __builtin_ctzll(bitboard);
+            move_list[count++] = Move{ static_cast<uint8_t>(target_sq + 8), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
+            bitboard &= (bitboard - 1);
+        }
+
+        uint64_t double_push = ((single_push & RANK_6) >> 8) & ~state.total_occ; 
+        while (double_push) {
+            int target_sq = __builtin_ctzll(double_push);
+            move_list[count++] = Move{ static_cast<uint8_t>(target_sq + 16), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
+            double_push &= (double_push - 1);
+        }
+
+        uint64_t cap_left = (pawns >> 9) & NOT_FILE_H & enemy_occ;
+        while (cap_left) {
+            int target_sq = __builtin_ctzll(cap_left);
+            move_list[count++] = Move{ static_cast<uint8_t>(target_sq + 9), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
+            cap_left &= (cap_left - 1);
+        }
+
+        uint64_t cap_right = (pawns >> 7) & NOT_FILE_A & enemy_occ;
+        while (cap_right) {
+            int target_sq = __builtin_ctzll(cap_right);
+            move_list[count++] = Move{ static_cast<uint8_t>(target_sq + 7), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
+            cap_right &= (cap_right - 1);
+        }
+    }
+
+    // 2. PIECE SYMMETRIC VECTOR EXTRACTIONS (KNIGHTS & ROOKS)
+    for (int type = 1; type < 4; ++type) {
+        if (type == BISHOP) continue; 
         uint64_t piece_bitboard = state.pieces[active_color][type];
 
         while (piece_bitboard) {
@@ -127,14 +192,12 @@ int Simulator::generate_pseudo_moves(const GameState& state, int active_color, M
                 valid_moves_mask = get_rook_vision(src_square, state.total_occ) & target_filter;
             }
 
-            // Extract target move payload coordinates straight out of the mask bit-by-bit
             while (valid_moves_mask) {
                 int target_sq = __builtin_ctzll(valid_moves_mask);
                 move_list[count++] = Move{ static_cast<uint8_t>(src_square), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(type), 0 };
-                valid_moves_mask &= (valid_moves_mask - 1); // Blazes out the low bit instantly
+                valid_moves_mask &= (valid_moves_mask - 1);
             }
-
-            piece_bitboard &= (piece_bitboard - 1); // Shift out evaluated piece bit
+            piece_bitboard &= (piece_bitboard - 1);
         }
     }
     return count;

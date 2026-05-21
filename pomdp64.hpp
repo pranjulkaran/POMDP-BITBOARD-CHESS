@@ -1,6 +1,6 @@
 /**
  * @file pomdp64.hpp
- * @brief Phase 1 Bitboard Register Specification - The Markovian Void Protocol
+ * @brief Phase 2 Updated Phase 2 Definition - Sliding Ray Integration
  * @version 1.0.0
  * * COMPLIANCE MANDATE:
  * - Strict 128-Byte total footprint spanning exactly two 64-byte L1 cache lines.
@@ -15,11 +15,9 @@
 
 namespace pomdp64 {
 
-// Color Array Lookups
 constexpr int WHITE = 0;
 constexpr int BLACK = 1;
 
-// Fine-grained Piece Register Mapping Positions
 constexpr int PAWN   = 0;
 constexpr int KNIGHT = 1;
 constexpr int BISHOP = 2;
@@ -27,55 +25,60 @@ constexpr int ROOK   = 3;
 constexpr int QUEEN  = 4;
 constexpr int KING   = 5;
 
-/**
- * @struct GameState
- * @brief Memory-aligned core simulation matrix optimized for L1 cache locality.
- */
 struct alignas(64) GameState {
-    // Cache Line 1 (Offset Bytes 0 - 63)
-    // Sequential layout maps: White (P, N, B, R, Q, K) followed by Black (P, N)
     uint64_t pieces[2][6]; 
-
-    // Cache Line 2 (Offset Bytes 64 - 127)
-    // Initialized via manual structural alignments to guarantee contiguous mapping
-    alignas(8) uint64_t white_occ;    ///< Compressed structural bitmask of all White pieces
-    alignas(8) uint64_t black_occ;    ///< Compressed structural bitmask of all Black pieces
-    alignas(8) uint64_t total_occ;    ///< Global physical collision boundary mask
-    alignas(8) uint64_t metadata;     ///< System runtime flags (Bit 0: Active Turn)
+    alignas(8) uint64_t white_occ;    
+    alignas(8) uint64_t black_occ;    
+    alignas(8) uint64_t total_occ;    
+    alignas(8) uint64_t metadata;     
 };
 
-/**
- * @class Simulator
- * @brief Headless logic factory executing pure bitwise operations over the state matrix.
- */
 class Simulator {
+private:
+    // 64-element precomputed direction lookup maps
+    uint64_t ray_up[64];
+    uint64_t ray_down[64];
+    uint64_t ray_right[64];
+    uint64_t ray_left[64];
+
+    uint64_t ray_up_right[64];
+    uint64_t ray_up_left[64];
+    uint64_t ray_down_right[64];
+    uint64_t ray_down_left[64];
+
+    /**
+     * @brief One-time generation execution loop mapping directional bits.
+     */
+    void init_ray_masks();
+
 public:
     Simulator();
     ~Simulator() = default;
 
-    /**
-     * @brief Blasts the matrix back to the standard LERF initial layout boundaries.
-     */
     void reset_board(GameState& state);
-
-    /**
-     * @brief Flattens granular piece bitboards into fast global occupancy barrier masks.
-     */
     inline void squash_occupancy(GameState& state);
+    void print_bitboard(uint64_t bitboard) const;
 
     /**
-     * @brief Linear projection to isolate a specific coordinate bitmask.
-     * @param file Index horizontal [0-7] (a to h)
-     * @param rank Index vertical [0-7] (1 to 8)
+     * @brief Resolves orthogonal vision masks looplessly using hardware bit manipulation opcodes.
      */
+    uint64_t get_rook_vision(int square, uint64_t total_occ) const;
+
+    /**
+     * @brief Resolves diagonal vision masks looplessly using hardware bit manipulation opcodes.
+     */
+    uint64_t get_bishop_vision(int square, uint64_t total_occ) const;
+
+    /**
+     * @brief Combines orthogonal and diagonal paths to resolve compound queen vision profiles.
+     */
+    inline uint64_t get_queen_vision(int square, uint64_t total_occ) const {
+        return get_rook_vision(square, total_occ) | get_bishop_vision(square, total_occ);
+    }
+
     static inline uint64_t get_square_mask(int file, int rank) {
         return 1ULL << ((rank * 8) + file);
     }
-
-    /**
-     * @brief Visualizes any raw 64-bit integer channel as a clean 8x8 matrix grid.
-     */
-    void print_bitboard(uint64_t bitboard) const;
 };
 
 } // namespace pomdp64

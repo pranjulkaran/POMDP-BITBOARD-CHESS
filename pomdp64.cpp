@@ -1,6 +1,6 @@
 /**
  * @file pomdp64.cpp
- * @brief Branch-Free and Loopless Bitwise Core Realizations for POMDP-64.
+ * @brief Compact Bitboard Core for POMDP-64
  */
 
 #include "pomdp64.hpp"
@@ -8,258 +8,704 @@
 
 namespace pomdp64 {
 
+// ============================================================
+// CONSTRUCTOR
+// ============================================================
+
 Simulator::Simulator() {
     init_ray_masks();
-    init_step_masks();
+    init_attack_masks();
 }
+
+// ============================================================
+// RAY INITIALIZATION
+// ============================================================
 
 void Simulator::init_ray_masks() {
+
     for (int s = 0; s < 64; ++s) {
-        ray_up[s] = ray_down[s] = ray_right[s] = ray_left[s] = 0ULL;
-        ray_up_right[s] = ray_up_left[s] = ray_down_right[s] = ray_down_left[s] = 0ULL;
 
-        int init_file = s % 8;
-        int init_rank = s / 8;
+        int f = s & 7;
+        int r = s >> 3;
 
-        for (int r = init_rank + 1; r < 8; ++r) ray_up[s] |= (1ULL << (r * 8 + init_file));
-        for (int r = init_rank - 1; r >= 0; --r) ray_down[s] |= (1ULL << (r * 8 + init_file));
-        for (int f = init_file + 1; f < 8; ++f)  ray_right[s] |= (1ULL << (init_rank * 8 + f));
-        for (int f = init_file - 1; f >= 0; --f)  ray_left[s] |= (1ULL << (init_rank * 8 + f));
+        ray_up[s] = ray_down[s] = 0ULL;
+        ray_left[s] = ray_right[s] = 0ULL;
 
-        for (int r = init_rank + 1, f = init_file + 1; r < 8 && f < 8; ++r, ++f)   ray_up_right[s] |= (1ULL << (r * 8 + f));
-        for (int r = init_rank + 1, f = init_file - 1; r < 8 && f >= 0; ++r, --f)  ray_up_left[s] |= (1ULL << (r * 8 + f));
-        for (int r = init_rank - 1, f = init_file + 1; r >= 0 && f < 8; --r, ++f)  ray_down_right[s] |= (1ULL << (r * 8 + f));
-        for (int r = init_rank - 1, f = init_file - 1; r >= 0 && f >= 0; --r, --f) ray_down_left[s] |= (1ULL << (r * 8 + f));
+        ray_up_right[s] = ray_up_left[s] = 0ULL;
+        ray_down_right[s] = ray_down_left[s] = 0ULL;
+
+        for (int rr = r + 1; rr < 8; ++rr)
+            ray_up[s] |= 1ULL << (rr * 8 + f);
+
+        for (int rr = r - 1; rr >= 0; --rr)
+            ray_down[s] |= 1ULL << (rr * 8 + f);
+
+        for (int ff = f + 1; ff < 8; ++ff)
+            ray_right[s] |= 1ULL << (r * 8 + ff);
+
+        for (int ff = f - 1; ff >= 0; --ff)
+            ray_left[s] |= 1ULL << (r * 8 + ff);
+
+        for (int rr = r + 1, ff = f + 1;
+             rr < 8 && ff < 8;
+             ++rr, ++ff)
+            ray_up_right[s] |= 1ULL << (rr * 8 + ff);
+
+        for (int rr = r + 1, ff = f - 1;
+             rr < 8 && ff >= 0;
+             ++rr, --ff)
+            ray_up_left[s] |= 1ULL << (rr * 8 + ff);
+
+        for (int rr = r - 1, ff = f + 1;
+             rr >= 0 && ff < 8;
+             --rr, ++ff)
+            ray_down_right[s] |= 1ULL << (rr * 8 + ff);
+
+        for (int rr = r - 1, ff = f - 1;
+             rr >= 0 && ff >= 0;
+             --rr, --ff)
+            ray_down_left[s] |= 1ULL << (rr * 8 + ff);
     }
 }
 
-void Simulator::init_step_masks() {
+// ============================================================
+// ATTACK TABLES
+// ============================================================
+
+void Simulator::init_attack_masks() {
+
+    constexpr int knight_delta[8][2] = {
+        { 2, 1}, { 2,-1},
+        {-2, 1}, {-2,-1},
+        { 1, 2}, { 1,-2},
+        {-1, 2}, {-1,-2}
+    };
+
+    constexpr int king_delta[8][2] = {
+        { 1, 0}, {-1, 0},
+        { 0, 1}, { 0,-1},
+        { 1, 1}, { 1,-1},
+        {-1, 1}, {-1,-1}
+    };
+
     for (int s = 0; s < 64; ++s) {
+
         knight_attacks[s] = 0ULL;
-        int file = s % 8;
-        int rank = s / 8;
+        king_attacks[s] = 0ULL;
 
-        int offsets[8][2] = {
-            {2, 1}, {2, -1}, {-2, 1}, {-2, -1},
-            {1, 2}, {1, -2}, {-1, 2}, {-1, -2}
-        };
+        int f = s & 7;
+        int r = s >> 3;
 
-        for (auto& offset : offsets) {
-            int target_file = file + offset[0];
-            int target_rank = rank + offset[1];
+        for (auto& d : knight_delta) {
 
-            if (target_file >= 0 && target_file < 8 && target_rank >= 0 && target_rank < 8) {
-                knight_attacks[s] |= (1ULL << (target_rank * 8 + target_file));
-            }
+            int nf = f + d[0];
+            int nr = r + d[1];
+
+            if (nf >= 0 && nf < 8 &&
+                nr >= 0 && nr < 8)
+                knight_attacks[s] |=
+                    1ULL << (nr * 8 + nf);
+        }
+
+        for (auto& d : king_delta) {
+
+            int nf = f + d[0];
+            int nr = r + d[1];
+
+            if (nf >= 0 && nf < 8 &&
+                nr >= 0 && nr < 8)
+                king_attacks[s] |=
+                    1ULL << (nr * 8 + nf);
         }
     }
 }
 
-void Simulator::reset_board(GameState& state) {
-    for (int color = 0; color < 2; ++color) {
-        for (int type = 0; type < 6; ++type) {
-            state.pieces[color][type] = 0ULL;
-        }
-    }
+// ============================================================
+// RESET
+// ============================================================
 
-    state.pieces[WHITE][PAWN]   = 0x000000000000FF00ULL;
-    state.pieces[WHITE][ROOK]   = 0x0000000000000081ULL;
-    state.pieces[WHITE][KNIGHT] = 0x0000000000000042ULL;
-    state.pieces[WHITE][BISHOP] = 0x0000000000000024ULL;
-    state.pieces[WHITE][QUEEN]  = 0x0000000000000008ULL;
-    state.pieces[WHITE][KING]   = 0x0000000000000010ULL;
+void Simulator::reset_board(GameState& s) {
 
-    state.pieces[BLACK][PAWN]   = 0x00FF000000000000ULL;
-    state.pieces[BLACK][ROOK]   = 0x8100000000000000ULL;
-    state.pieces[BLACK][KNIGHT] = 0x4200000000000000ULL;
-    state.pieces[BLACK][BISHOP] = 0x2400000000000000ULL;
-    state.pieces[BLACK][QUEEN]  = 0x0800000000000000ULL;
-    state.pieces[BLACK][KING]   = 0x1000000000000000ULL;
+    for (int c = 0; c < 2; ++c)
+        for (int p = 0; p < 6; ++p)
+            s.pieces[c][p] = 0ULL;
 
-    squash_occupancy(state);
-    state.metadata = 0ULL;
+    s.pieces[WHITE][PAWN]   = 0x000000000000FF00ULL;
+    s.pieces[WHITE][KNIGHT] = 0x0000000000000042ULL;
+    s.pieces[WHITE][BISHOP] = 0x0000000000000024ULL;
+    s.pieces[WHITE][ROOK]   = 0x0000000000000081ULL;
+    s.pieces[WHITE][QUEEN]  = 0x0000000000000008ULL;
+    s.pieces[WHITE][KING]   = 0x0000000000000010ULL;
+
+    s.pieces[BLACK][PAWN]   = 0x00FF000000000000ULL;
+    s.pieces[BLACK][KNIGHT] = 0x4200000000000000ULL;
+    s.pieces[BLACK][BISHOP] = 0x2400000000000000ULL;
+    s.pieces[BLACK][ROOK]   = 0x8100000000000000ULL;
+    s.pieces[BLACK][QUEEN]  = 0x0800000000000000ULL;
+    s.pieces[BLACK][KING]   = 0x1000000000000000ULL;
+
+    squash_occupancy(s);
+
+    s.metadata = 0ULL;
 }
 
-inline void Simulator::squash_occupancy(GameState& state) {
-    state.white_occ = state.pieces[WHITE][PAWN]   | state.pieces[WHITE][KNIGHT] |
-                      state.pieces[WHITE][BISHOP] | state.pieces[WHITE][ROOK]   |
-                      state.pieces[WHITE][QUEEN]  | state.pieces[WHITE][KING];
+// ============================================================
+// OCCUPANCY
+// ============================================================
 
-    state.black_occ = state.pieces[BLACK][PAWN]   | state.pieces[BLACK][KNIGHT] |
-                      state.pieces[BLACK][BISHOP] | state.pieces[BLACK][ROOK]   |
-                      state.pieces[BLACK][QUEEN]  | state.pieces[BLACK][KING];
+inline void Simulator::squash_occupancy(GameState& s) const {
 
-    state.total_occ = state.white_occ | state.black_occ;
+    s.white_occ =
+        s.pieces[WHITE][PAWN]   |
+        s.pieces[WHITE][KNIGHT] |
+        s.pieces[WHITE][BISHOP] |
+        s.pieces[WHITE][ROOK]   |
+        s.pieces[WHITE][QUEEN]  |
+        s.pieces[WHITE][KING];
+
+    s.black_occ =
+        s.pieces[BLACK][PAWN]   |
+        s.pieces[BLACK][KNIGHT] |
+        s.pieces[BLACK][BISHOP] |
+        s.pieces[BLACK][ROOK]   |
+        s.pieces[BLACK][QUEEN]  |
+        s.pieces[BLACK][KING];
+
+    s.total_occ = s.white_occ | s.black_occ;
 }
 
-void Simulator::make_move(GameState& state, int active_color, int piece_type, int source_square, int target_square) {
-    int opponent_color = 1 - active_color;
+// ============================================================
+// MOVE EXECUTION
+// ============================================================
 
-    state.pieces[active_color][piece_type] &= ~(1ULL << source_square);
+void Simulator::make_move(
+    GameState& s,
+    int color,
+    int piece,
+    int from,
+    int to
+) {
 
-    uint64_t capture_mask = ~(1ULL << target_square);
-    for (int type = 0; type < 6; ++type) {
-        state.pieces[opponent_color][type] &= capture_mask;
-    }
+    s.pieces[color][piece] &=
+        ~(1ULL << from);
 
-    state.pieces[active_color][piece_type] |= (1ULL << target_square);
-    squash_occupancy(state);
-    state.metadata ^= 1ULL;
+    int enemy = color ^ 1;
+
+    uint64_t clear_mask =
+        ~(1ULL << to);
+
+    for (int p = 0; p < 6; ++p)
+        s.pieces[enemy][p] &= clear_mask;
+
+    s.pieces[color][piece] |=
+        (1ULL << to);
+
+    squash_occupancy(s);
+
+    s.metadata ^= 1ULL;
 }
 
-int Simulator::generate_pseudo_moves(const GameState& state, int active_color, Move* move_list) {
+// ============================================================
+// SLIDING HELPERS
+// ============================================================
+
+static inline uint64_t clip_positive(
+    uint64_t ray,
+    uint64_t blockers,
+    const uint64_t* table
+) {
+    return blockers
+        ? (ray ^ table[__builtin_ctzll(blockers)])
+        : ray;
+}
+
+static inline uint64_t clip_negative(
+    uint64_t ray,
+    uint64_t blockers,
+    const uint64_t* table
+) {
+    return blockers
+        ? (ray ^ table[63 - __builtin_clzll(blockers)])
+        : ray;
+}
+
+// ============================================================
+// ROOK
+// ============================================================
+
+uint64_t Simulator::get_rook_vision(
+    int sq,
+    uint64_t occ
+) const {
+
+    return
+        clip_positive(
+            ray_up[sq],
+            occ & ray_up[sq],
+            ray_up
+        )
+
+        |
+
+        clip_positive(
+            ray_right[sq],
+            occ & ray_right[sq],
+            ray_right
+        )
+
+        |
+
+        clip_negative(
+            ray_down[sq],
+            occ & ray_down[sq],
+            ray_down
+        )
+
+        |
+
+        clip_negative(
+            ray_left[sq],
+            occ & ray_left[sq],
+            ray_left
+        );
+}
+
+// ============================================================
+// BISHOP
+// ============================================================
+
+uint64_t Simulator::get_bishop_vision(
+    int sq,
+    uint64_t occ
+) const {
+
+    return
+        clip_positive(
+            ray_up_right[sq],
+            occ & ray_up_right[sq],
+            ray_up_right
+        )
+
+        |
+
+        clip_positive(
+            ray_up_left[sq],
+            occ & ray_up_left[sq],
+            ray_up_left
+        )
+
+        |
+
+        clip_negative(
+            ray_down_right[sq],
+            occ & ray_down_right[sq],
+            ray_down_right
+        )
+
+        |
+
+        clip_negative(
+            ray_down_left[sq],
+            occ & ray_down_left[sq],
+            ray_down_left
+        );
+}
+
+// ============================================================
+// MOVE GENERATION
+// ============================================================
+
+int Simulator::generate_pseudo_moves(
+    const GameState& s,
+    int color,
+    Move* out
+) {
+
     int count = 0;
-    uint64_t friendly_occ = (active_color == WHITE) ? state.white_occ : state.black_occ;
-    uint64_t enemy_occ    = (active_color == WHITE) ? state.black_occ : state.white_occ;
-    uint64_t target_filter = ~friendly_occ;
 
-    // 1. ASYMMETRIC PAWN PROCESSING PIPELINE
-    uint64_t pawns = state.pieces[active_color][PAWN];
-    
-    if (active_color == WHITE) {
-        uint64_t single_push = (pawns << 8) & ~state.total_occ;
-        uint64_t bitboard = single_push;
-        while (bitboard) {
-            int target_sq = __builtin_ctzll(bitboard);
-            move_list[count++] = Move{ static_cast<uint8_t>(target_sq - 8), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
-            bitboard &= (bitboard - 1);
+    uint64_t friendly =
+        (color == WHITE)
+        ? s.white_occ
+        : s.black_occ;
+
+    uint64_t enemy =
+        (color == WHITE)
+        ? s.black_occ
+        : s.white_occ;
+
+    uint64_t valid = ~friendly;
+
+    // ========================================================
+    // KNIGHT / BISHOP / ROOK / QUEEN / KING
+    // ========================================================
+
+    for (int piece = KNIGHT;
+         piece <= KING;
+         ++piece) {
+
+        uint64_t bb =
+            s.pieces[color][piece];
+
+        while (bb) {
+
+            int from =
+                __builtin_ctzll(bb);
+
+            uint64_t attacks = 0ULL;
+
+            switch (piece) {
+
+                case KNIGHT:
+                    attacks =
+                        knight_attacks[from];
+                    break;
+
+                case BISHOP:
+                    attacks =
+                        get_bishop_vision(
+                            from,
+                            s.total_occ
+                        );
+                    break;
+
+                case ROOK:
+                    attacks =
+                        get_rook_vision(
+                            from,
+                            s.total_occ
+                        );
+                    break;
+
+                case QUEEN:
+                    attacks =
+                        get_queen_vision(
+                            from,
+                            s.total_occ
+                        );
+                    break;
+
+                case KING:
+                    attacks =
+                        king_attacks[from];
+                    break;
+            }
+
+            attacks &= valid;
+
+            while (attacks) {
+
+                int to =
+                    __builtin_ctzll(attacks);
+
+                out[count++] = {
+                    (uint8_t)from,
+                    (uint8_t)to,
+                    (uint8_t)piece,
+                    0
+                };
+
+                attacks &= attacks - 1;
+            }
+
+            bb &= bb - 1;
+        }
+    }
+
+    // ========================================================
+    // PAWNS
+    // ========================================================
+
+    uint64_t pawns =
+        s.pieces[color][PAWN];
+
+    if (color == WHITE) {
+
+        uint64_t push1 =
+            (pawns << 8) &
+            ~s.total_occ;
+
+        uint64_t push2 =
+            ((push1 & RANK_3) << 8) &
+            ~s.total_occ;
+
+        uint64_t capL =
+            (pawns << 7) &
+            NOT_FILE_H &
+            enemy;
+
+        uint64_t capR =
+            (pawns << 9) &
+            NOT_FILE_A &
+            enemy;
+
+        while (push1) {
+
+            int to =
+                __builtin_ctzll(push1);
+
+            out[count++] = {
+                (uint8_t)(to - 8),
+                (uint8_t)to,
+                PAWN,
+                0
+            };
+
+            push1 &= push1 - 1;
         }
 
-        uint64_t double_push = ((single_push & RANK_3) << 8) & ~state.total_occ;
-        while (double_push) {
-            int target_sq = __builtin_ctzll(double_push);
-            move_list[count++] = Move{ static_cast<uint8_t>(target_sq - 16), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
-            double_push &= (double_push - 1);
+        while (push2) {
+
+            int to =
+                __builtin_ctzll(push2);
+
+            out[count++] = {
+                (uint8_t)(to - 16),
+                (uint8_t)to,
+                PAWN,
+                0
+            };
+
+            push2 &= push2 - 1;
         }
 
-        uint64_t cap_left = (pawns << 7) & NOT_FILE_H & enemy_occ;
-        while (cap_left) {
-            int target_sq = __builtin_ctzll(cap_left);
-            move_list[count++] = Move{ static_cast<uint8_t>(target_sq - 7), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
-            cap_left &= (cap_left - 1);
+        while (capL) {
+
+            int to =
+                __builtin_ctzll(capL);
+
+            out[count++] = {
+                (uint8_t)(to - 7),
+                (uint8_t)to,
+                PAWN,
+                0
+            };
+
+            capL &= capL - 1;
         }
 
-        uint64_t cap_right = (pawns << 9) & NOT_FILE_A & enemy_occ;
-        while (cap_right) {
-            int target_sq = __builtin_ctzll(cap_right);
-            move_list[count++] = Move{ static_cast<uint8_t>(target_sq - 9), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
-            cap_right &= (cap_right - 1);
+        while (capR) {
+
+            int to =
+                __builtin_ctzll(capR);
+
+            out[count++] = {
+                (uint8_t)(to - 9),
+                (uint8_t)to,
+                PAWN,
+                0
+            };
+
+            capR &= capR - 1;
         }
-    } 
+    }
+
     else {
-        uint64_t single_push = (pawns >> 8) & ~state.total_occ;
-        uint64_t bitboard = single_push;
-        while (bitboard) {
-            int target_sq = __builtin_ctzll(bitboard);
-            move_list[count++] = Move{ static_cast<uint8_t>(target_sq + 8), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
-            bitboard &= (bitboard - 1);
+
+        uint64_t push1 =
+            (pawns >> 8) &
+            ~s.total_occ;
+
+        uint64_t push2 =
+            ((push1 & RANK_6) >> 8) &
+            ~s.total_occ;
+
+        uint64_t capL =
+            (pawns >> 9) &
+            NOT_FILE_H &
+            enemy;
+
+        uint64_t capR =
+            (pawns >> 7) &
+            NOT_FILE_A &
+            enemy;
+
+        while (push1) {
+
+            int to =
+                __builtin_ctzll(push1);
+
+            out[count++] = {
+                (uint8_t)(to + 8),
+                (uint8_t)to,
+                PAWN,
+                0
+            };
+
+            push1 &= push1 - 1;
         }
 
-        uint64_t double_push = ((single_push & RANK_6) >> 8) & ~state.total_occ; 
-        while (double_push) {
-            int target_sq = __builtin_ctzll(double_push);
-            move_list[count++] = Move{ static_cast<uint8_t>(target_sq + 16), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
-            double_push &= (double_push - 1);
+        while (push2) {
+
+            int to =
+                __builtin_ctzll(push2);
+
+            out[count++] = {
+                (uint8_t)(to + 16),
+                (uint8_t)to,
+                PAWN,
+                0
+            };
+
+            push2 &= push2 - 1;
         }
 
-        uint64_t cap_left = (pawns >> 9) & NOT_FILE_H & enemy_occ;
-        while (cap_left) {
-            int target_sq = __builtin_ctzll(cap_left);
-            move_list[count++] = Move{ static_cast<uint8_t>(target_sq + 9), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
-            cap_left &= (cap_left - 1);
+        while (capL) {
+
+            int to =
+                __builtin_ctzll(capL);
+
+            out[count++] = {
+                (uint8_t)(to + 9),
+                (uint8_t)to,
+                PAWN,
+                0
+            };
+
+            capL &= capL - 1;
         }
 
-        uint64_t cap_right = (pawns >> 7) & NOT_FILE_A & enemy_occ;
-        while (cap_right) {
-            int target_sq = __builtin_ctzll(cap_right);
-            move_list[count++] = Move{ static_cast<uint8_t>(target_sq + 7), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(PAWN), 0 };
-            cap_right &= (cap_right - 1);
+        while (capR) {
+
+            int to =
+                __builtin_ctzll(capR);
+
+            out[count++] = {
+                (uint8_t)(to + 7),
+                (uint8_t)to,
+                PAWN,
+                0
+            };
+
+            capR &= capR - 1;
         }
     }
 
-    // 2. PIECE SYMMETRIC VECTOR EXTRACTIONS (KNIGHTS & ROOKS)
-    for (int type = 1; type < 4; ++type) {
-        if (type == BISHOP) continue; 
-        uint64_t piece_bitboard = state.pieces[active_color][type];
-
-        while (piece_bitboard) {
-            int src_square = __builtin_ctzll(piece_bitboard);
-            uint64_t valid_moves_mask = 0ULL;
-
-            if (type == KNIGHT) {
-                valid_moves_mask = get_knight_attacks(src_square) & target_filter;
-            } else if (type == ROOK) {
-                valid_moves_mask = get_rook_vision(src_square, state.total_occ) & target_filter;
-            }
-
-            while (valid_moves_mask) {
-                int target_sq = __builtin_ctzll(valid_moves_mask);
-                move_list[count++] = Move{ static_cast<uint8_t>(src_square), static_cast<uint8_t>(target_sq), static_cast<uint8_t>(type), 0 };
-                valid_moves_mask &= (valid_moves_mask - 1);
-            }
-            piece_bitboard &= (piece_bitboard - 1);
-        }
-    }
     return count;
 }
 
-uint64_t Simulator::get_rook_vision(int square, uint64_t occ) const {
-    uint64_t vision = 0ULL;
-    uint64_t blockers = 0ULL;
+// ============================================================
+// VISIBILITY MASK
+// ============================================================
 
-    blockers = occ & ray_up[square];
-    if (blockers) { vision |= (ray_up[square] ^ ray_up[__builtin_ctzll(blockers)]); }
-    else { vision |= ray_up[square]; }
+uint64_t Simulator::get_visibility_mask(
+    const GameState& s,
+    int color
+) const {
 
-    blockers = occ & ray_right[square];
-    if (blockers) { vision |= (ray_right[square] ^ ray_right[__builtin_ctzll(blockers)]); }
-    else { vision |= ray_right[square]; }
+    uint64_t visibility =
+        (color == WHITE)
+        ? s.white_occ
+        : s.black_occ;
 
-    blockers = occ & ray_down[square];
-    if (blockers) { vision |= (ray_down[square] ^ ray_down[63 - __builtin_clzll(blockers)]); }
-    else { vision |= ray_down[square]; }
+    for (int piece = PAWN;
+         piece <= KING;
+         ++piece) {
 
-    blockers = occ & ray_left[square];
-    if (blockers) { vision |= (ray_left[square] ^ ray_left[63 - __builtin_clzll(blockers)]); }
-    else { vision |= ray_left[square]; }
+        uint64_t bb =
+            s.pieces[color][piece];
 
-    return vision;
-}
+        while (bb) {
 
-uint64_t Simulator::get_bishop_vision(int square, uint64_t occ) const {
-    uint64_t vision = 0ULL;
-    uint64_t blockers = 0ULL;
+            int sq =
+                __builtin_ctzll(bb);
 
-    blockers = occ & ray_up_right[square];
-    if (blockers) { vision |= (ray_up_right[square] ^ ray_up_right[__builtin_ctzll(blockers)]); }
-    else { vision |= ray_up_right[square]; }
+            switch (piece) {
 
-    blockers = occ & ray_up_left[square];
-    if (blockers) { vision |= (ray_up_left[square] ^ ray_up_left[__builtin_ctzll(blockers)]); }
-    else { vision |= ray_up_left[square]; }
+                case PAWN:
 
-    blockers = occ & ray_down_right[square];
-    if (blockers) { vision |= (ray_down_right[square] ^ ray_down_right[63 - __builtin_clzll(blockers)]); }
-    else { vision |= ray_down_right[square]; }
+                    if (color == WHITE) {
 
-    blockers = occ & ray_down_left[square];
-    if (blockers) { vision |= (ray_down_left[square] ^ ray_down_left[63 - __builtin_clzll(blockers)]); }
-    else { vision |= ray_down_left[square]; }
+                        visibility |=
+                            ((1ULL << sq) << 7 &
+                             NOT_FILE_H);
 
-    return vision;
-}
+                        visibility |=
+                            ((1ULL << sq) << 9 &
+                             NOT_FILE_A);
+                    }
+                    else {
 
-void Simulator::print_bitboard(uint64_t bitboard) const {
-    std::cout << "\n";
-    for (int rank = 7; rank >= 0; --rank) {
-        std::cout << rank + 1 << "  ";
-        for (int file = 0; file < 8; ++file) {
-            int sq = rank * 8 + file;
-            std::cout << ((bitboard >> sq) & 1ULL) << " ";
+                        visibility |=
+                            ((1ULL << sq) >> 9 &
+                             NOT_FILE_H);
+
+                        visibility |=
+                            ((1ULL << sq) >> 7 &
+                             NOT_FILE_A);
+                    }
+
+                    break;
+
+                case KNIGHT:
+                    visibility |=
+                        knight_attacks[sq];
+                    break;
+
+                case BISHOP:
+                    visibility |=
+                        get_bishop_vision(
+                            sq,
+                            s.total_occ
+                        );
+                    break;
+
+                case ROOK:
+                    visibility |=
+                        get_rook_vision(
+                            sq,
+                            s.total_occ
+                        );
+                    break;
+
+                case QUEEN:
+                    visibility |=
+                        get_queen_vision(
+                            sq,
+                            s.total_occ
+                        );
+                    break;
+
+                case KING:
+                    visibility |=
+                        king_attacks[sq];
+                    break;
+            }
+
+            bb &= bb - 1;
         }
+    }
+
+    return visibility;
+}
+
+// ============================================================
+// DEBUG
+// ============================================================
+
+void Simulator::print_bitboard(
+    uint64_t bb
+) const {
+
+    std::cout << "\n";
+
+    for (int r = 7; r >= 0; --r) {
+
+        std::cout << r + 1 << "  ";
+
+        for (int f = 0; f < 8; ++f) {
+
+            int sq = r * 8 + f;
+
+            std::cout
+                << ((bb >> sq) & 1ULL)
+                << " ";
+        }
+
         std::cout << "\n";
     }
-    std::cout << "   a b c d e f g h\n\n";
+
+    std::cout
+        << "   a b c d e f g h\n\n";
 }
 
 } // namespace pomdp64

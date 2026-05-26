@@ -1,225 +1,570 @@
+/**
+ * @file main.cpp
+ * @brief POMDP-64 Full Validation Suite
+ */
+
 #include "pomdp64.hpp"
-#include <iostream>
+
 #include <cassert>
+#include <iostream>
 
 using namespace pomdp64;
 
 // ============================================================
-// SIMPLE TEST UTILITIES
+// HELPERS
 // ============================================================
 
-static void print_fail(const char* test) {
-    std::cout << "[FAIL] " << test << "\n";
-    std::exit(1);
+static void clear_board(GameState& s) {
+
+    for (int c = 0; c < 2; ++c)
+        for (int p = 0; p < 6; ++p)
+            s.pieces[c][p] = 0ULL;
+
+    s.white_occ = 0ULL;
+    s.black_occ = 0ULL;
+    s.total_occ = 0ULL;
+    s.metadata = 0ULL;
 }
 
-static void expect(bool cond, const char* test) {
-    if (!cond) print_fail(test);
-}
+static void require(bool condition, const char* test_name) {
 
-static int count_bits(uint64_t bb) {
-    int c = 0;
-    while (bb) {
-        bb &= bb - 1;
-        c++;
+    if (!condition) {
+
+        std::cerr
+            << "[FAILED] "
+            << test_name
+            << "\n";
+
+        std::exit(EXIT_FAILURE);
     }
-    return c;
+
+    std::cout
+        << "[PASSED] "
+        << test_name
+        << "\n";
 }
 
 // ============================================================
-// TEST 1: BOARD INITIALIZATION
-// ============================================================
-
-static void test_reset_board() {
-    Simulator sim;
-    GameState s{};
-
-    sim.reset_board(s);
-
-    uint64_t total =
-        s.white_occ | s.black_occ;
-
-    expect(total != 0ULL, "reset_board: pieces exist");
-
-    expect((s.pieces[WHITE][KING] & (1ULL << 4)) != 0,
-           "reset_board: white king correct square");
-
-    expect((s.pieces[BLACK][KING] & (1ULL << 60)) != 0,
-           "reset_board: black king correct square");
-}
-
-// ============================================================
-// TEST 2: OCCUPANCY CONSISTENCY
-// ============================================================
-
-static void test_occupancy() {
-    Simulator sim;
-    GameState s{};
-
-    sim.reset_board(s);
-
-    uint64_t manual = 0;
-
-    for (int c = 0; c < 2; c++)
-        for (int p = 0; p < 6; p++)
-            manual |= s.pieces[c][p];
-
-    expect(manual == s.total_occ,
-           "occupancy: total_occ matches bitboards");
-}
-
-// ============================================================
-// TEST 3: KNIGHT ATTACKS
-// ============================================================
-
-static void test_knight_attacks() {
-    Simulator sim;
-    GameState s{};
-
-    sim.reset_board(s);
-
-    // clear board for deterministic test
-    for (int c = 0; c < 2; c++)
-        for (int p = 0; p < 6; p++)
-            s.pieces[c][p] = 0;
-
-    s.pieces[WHITE][KNIGHT] = 1ULL << 36; // d5
-    sim.squash_occupancy(s);
-
-    uint64_t attacks = sim.get_knight_attacks(36);
-
-    expect(attacks != 0, "knight attacks non-zero");
-    expect((attacks & (1ULL << 21)) != 0, "knight attack valid square exists");
-}
-
-// ============================================================
-// TEST 4: ROOK RAYS
-// ============================================================
-
-static void test_rook_vision() {
-    Simulator sim;
-    GameState s{};
-
-    for (int i = 0; i < 64; i++)
-        s.pieces[WHITE][PAWN] = 0;
-
-    s.pieces[WHITE][ROOK] = 1ULL << 27; // d4
-    sim.squash_occupancy(s);
-
-    uint64_t vision = sim.get_rook_vision(27, s.total_occ);
-
-    expect(vision != 0, "rook vision exists");
-}
-
-// ============================================================
-// TEST 5: CHECK DETECTION (KING ATTACK)
-// ============================================================
-
-static void test_check_detection() {
-    Simulator sim;
-    GameState s{};
-
-    sim.reset_board(s);
-
-    // remove everything
-    for (int c = 0; c < 2; c++)
-        for (int p = 0; p < 6; p++)
-            s.pieces[c][p] = 0;
-
-    // white king
-    s.pieces[WHITE][KING] = 1ULL << 4;
-
-    // black rook giving check
-    s.pieces[BLACK][ROOK] = 1ULL << 60;
-
-    sim.squash_occupancy(s);
-
-    bool check = sim.is_in_check(s, WHITE);
-
-    expect(check == true, "check detection works");
-}
-
-// ============================================================
-// TEST 6: PIN DETECTION BASIC LINE
-// ============================================================
-
-static void test_pin_detection() {
-    Simulator sim;
-    GameState s{};
-
-    sim.reset_board(s);
-
-    // clear board
-    for (int c = 0; c < 2; c++)
-        for (int p = 0; p < 6; p++)
-            s.pieces[c][p] = 0;
-
-    // white king on e1
-    s.pieces[WHITE][KING] = 1ULL << 4;
-
-    // white rook on e2 (potential pinned line)
-    s.pieces[WHITE][ROOK] = 1ULL << 12;
-
-    // black rook on e8 (pin source)
-    s.pieces[BLACK][ROOK] = 1ULL << 60;
-
-    sim.squash_occupancy(s);
-
-    uint64_t pinned = sim.get_pinned_pieces(s, WHITE);
-
-    expect(pinned != 0, "pin detection finds pinned piece");
-}
-
-// ============================================================
-// TEST 7: MOVE GENERATION BASIC
-// ============================================================
-
-static void test_move_generation() {
-    Simulator sim;
-    GameState s{};
-
-    sim.reset_board(s);
-
-    Move moves[256];
-
-    int n = sim.generate_pseudo_moves(s, WHITE, moves);
-
-    expect(n > 0, "move generation produces moves");
-    expect(n < 256, "move generation within buffer");
-}
-
-// ============================================================
-// TEST 8: VISIBILITY MASK
-// ============================================================
-
-static void test_visibility() {
-    Simulator sim;
-    GameState s{};
-
-    sim.reset_board(s);
-
-    uint64_t vis = sim.get_visibility_mask(s, WHITE);
-
-    expect(vis != 0, "visibility not empty");
-}
-
-// ============================================================
-// MAIN TEST RUNNER
+// MAIN
 // ============================================================
 
 int main() {
 
-    std::cout << "POMDP-64 FULL SYSTEM TEST START\n";
+    Simulator sim;
+    GameState state;
 
-    test_reset_board();
-    test_occupancy();
-    test_knight_attacks();
-    test_rook_vision();
-    test_check_detection();
-    test_pin_detection();
-    test_move_generation();
-    test_visibility();
+    std::cout
+        << "====================================\n"
+        << "POMDP-64 FULL SYSTEM TEST SUITE\n"
+        << "====================================\n\n";
 
-    std::cout << "ALL TESTS PASSED\n";
+    // ========================================================
+    // TEST 1
+    // RESET BOARD
+    // ========================================================
+
+    sim.reset_board(state);
+
+    require(
+        state.pieces[WHITE][PAWN] ==
+        0x000000000000FF00ULL,
+        "White pawns initialized"
+    );
+
+    require(
+        state.pieces[BLACK][KING] ==
+        0x1000000000000000ULL,
+        "Black king initialized"
+    );
+
+    require(
+        state.total_occ != 0ULL,
+        "Occupancy initialized"
+    );
+
+    // ========================================================
+    // TEST 2
+    // KNIGHT ATTACK TABLE
+    // ========================================================
+
+    {
+        uint64_t attacks =
+            sim.get_knight_attacks(28);
+
+        require(
+            __builtin_popcountll(attacks) == 8,
+            "Knight attacks from center"
+        );
+    }
+
+    // ========================================================
+    // TEST 3
+    // KING ATTACK TABLE
+    // ========================================================
+
+    {
+        uint64_t attacks =
+            sim.get_king_attacks(28);
+
+        require(
+            __builtin_popcountll(attacks) == 8,
+            "King attacks from center"
+        );
+    }
+
+    // ========================================================
+    // TEST 4
+    // ROOK VISION
+    // ========================================================
+
+    {
+        clear_board(state);
+
+        state.pieces[WHITE][ROOK] =
+            1ULL << 27;
+
+        sim.squash_occupancy(state);
+
+        uint64_t rook =
+            sim.get_rook_vision(
+                27,
+                state.total_occ
+            );
+
+        require(
+            __builtin_popcountll(rook) == 14,
+            "Rook open-board vision"
+        );
+    }
+
+    // ========================================================
+    // TEST 5
+    // BISHOP VISION
+    // ========================================================
+
+    {
+        clear_board(state);
+
+        state.pieces[WHITE][BISHOP] =
+            1ULL << 27;
+
+        sim.squash_occupancy(state);
+
+        uint64_t bishop =
+            sim.get_bishop_vision(
+                27,
+                state.total_occ
+            );
+
+        require(
+            __builtin_popcountll(bishop) == 13,
+            "Bishop open-board vision"
+        );
+    }
+
+    // ========================================================
+    // TEST 6
+    // QUEEN VISION
+    // ========================================================
+
+    {
+        clear_board(state);
+
+        state.pieces[WHITE][QUEEN] =
+            1ULL << 27;
+
+        sim.squash_occupancy(state);
+
+        uint64_t queen =
+            sim.get_queen_vision(
+                27,
+                state.total_occ
+            );
+
+        require(
+            __builtin_popcountll(queen) == 27,
+            "Queen open-board vision"
+        );
+    }
+
+    // ========================================================
+    // TEST 7
+    // SIMPLE MOVE
+    // ========================================================
+
+    {
+        sim.reset_board(state);
+
+        sim.make_move(
+            state,
+            WHITE,
+            PAWN,
+            12,
+            28
+        );
+
+        require(
+            state.pieces[WHITE][PAWN] &
+            (1ULL << 28),
+            "Pawn moved"
+        );
+
+        require(
+            !(state.pieces[WHITE][PAWN] &
+            (1ULL << 12)),
+            "Pawn removed from source"
+        );
+    }
+
+    // ========================================================
+    // TEST 8
+    // ATTACK DETECTION
+    // ========================================================
+
+    {
+        clear_board(state);
+
+        state.pieces[WHITE][KING] =
+            1ULL << 4;
+
+        state.pieces[BLACK][ROOK] =
+            1ULL << 60;
+
+        sim.squash_occupancy(state);
+
+        require(
+            sim.is_square_attacked(
+                state,
+                4,
+                BLACK
+            ),
+            "Rook attack detected"
+        );
+    }
+
+    // ========================================================
+    // TEST 9
+    // CHECK DETECTION
+    // ========================================================
+
+    {
+        clear_board(state);
+
+        state.pieces[WHITE][KING] =
+            1ULL << 4;
+
+        state.pieces[BLACK][QUEEN] =
+            1ULL << 60;
+
+        sim.squash_occupancy(state);
+
+        require(
+            sim.is_in_check(
+                state,
+                WHITE
+            ),
+            "Check detected"
+        );
+    }
+
+    // ========================================================
+    // TEST 10
+    // PIN DETECTION
+    // ========================================================
+
+    {
+        clear_board(state);
+
+        // White king e1
+        state.pieces[WHITE][KING] =
+            1ULL << 4;
+
+        // White rook e2
+        state.pieces[WHITE][ROOK] =
+            1ULL << 12;
+
+        // Black rook e8
+        state.pieces[BLACK][ROOK] =
+            1ULL << 60;
+
+        sim.squash_occupancy(state);
+
+        uint64_t pinned =
+            sim.get_pinned_pieces(
+                state,
+                WHITE
+            );
+
+        require(
+            pinned & (1ULL << 12),
+            "Pinned piece detected"
+        );
+    }
+
+    // ========================================================
+    // TEST 11
+    // PIN LEGAL MASK
+    // ========================================================
+
+    {
+        clear_board(state);
+
+        state.pieces[WHITE][KING] =
+            1ULL << 4;
+
+        state.pieces[WHITE][ROOK] =
+            1ULL << 12;
+
+        state.pieces[BLACK][ROOK] =
+            1ULL << 60;
+
+        sim.squash_occupancy(state);
+
+        uint64_t mask =
+            sim.legal_mask_from_pins(
+                state,
+                WHITE,
+                12
+            );
+
+        require(
+            mask & (1ULL << 20),
+            "Pinned movement along file allowed"
+        );
+
+        require(
+            !(mask & (1ULL << 13)),
+            "Pinned sideways movement blocked"
+        );
+    }
+
+    // ========================================================
+    // TEST 12
+    // ILLEGAL MOVE REJECTION
+    // ========================================================
+
+    {
+        clear_board(state);
+
+        // White king e1
+        state.pieces[WHITE][KING] =
+            1ULL << 4;
+
+        // White rook e2
+        state.pieces[WHITE][ROOK] =
+            1ULL << 12;
+
+        // Black rook e8
+        state.pieces[BLACK][ROOK] =
+            1ULL << 60;
+
+        sim.squash_occupancy(state);
+
+        bool ok =
+            sim.attempt_move(
+                state,
+                12,
+                13,
+                ROOK
+            );
+
+        require(
+            !ok,
+            "Illegal pinned move rejected"
+        );
+
+        require(
+            state.pieces[WHITE][ROOK] &
+            (1ULL << 12),
+            "Rollback successful"
+        );
+    }
+
+    // ========================================================
+    // TEST 13
+    // LEGAL PIN MOVE
+    // ========================================================
+
+    {
+        clear_board(state);
+
+        state.pieces[WHITE][KING] =
+            1ULL << 4;
+
+        state.pieces[WHITE][ROOK] =
+            1ULL << 12;
+
+        state.pieces[BLACK][ROOK] =
+            1ULL << 60;
+
+        sim.squash_occupancy(state);
+
+        bool ok =
+            sim.attempt_move(
+                state,
+                12,
+                20,
+                ROOK
+            );
+
+        require(
+            ok,
+            "Pinned vertical move allowed"
+        );
+    }
+
+    // ========================================================
+    // TEST 14
+    // PSEUDO MOVE GENERATION
+    // ========================================================
+
+    {
+        sim.reset_board(state);
+
+        Move moves[256];
+
+        int count =
+            sim.generate_pseudo_moves(
+                state,
+                WHITE,
+                moves
+            );
+
+        require(
+            count > 0,
+            "Pseudo moves generated"
+        );
+    }
+
+    // ========================================================
+    // TEST 15
+    // VISIBILITY SYSTEM
+    // ========================================================
+
+    {
+        sim.reset_board(state);
+
+        uint64_t vis =
+            sim.get_visibility_mask(
+                state,
+                WHITE
+            );
+
+        require(
+            vis != 0ULL,
+            "Visibility generated"
+        );
+    }
+
+    // ========================================================
+    // TEST 16
+    // CAPTURE EXECUTION
+    // ========================================================
+
+    {
+        clear_board(state);
+
+        state.pieces[WHITE][ROOK] =
+            1ULL << 0;
+
+        state.pieces[BLACK][KNIGHT] =
+            1ULL << 56;
+
+        sim.squash_occupancy(state);
+
+        sim.make_move(
+            state,
+            WHITE,
+            ROOK,
+            0,
+            56
+        );
+
+        require(
+            !(state.pieces[BLACK][KNIGHT]),
+            "Capture removed enemy piece"
+        );
+
+        require(
+            state.pieces[WHITE][ROOK] &
+            (1ULL << 56),
+            "Capture placed moving piece"
+        );
+    }
+
+    // ========================================================
+    // TEST 17
+    // PROMOTION
+    // ========================================================
+
+    {
+        clear_board(state);
+
+        state.pieces[WHITE][PAWN] =
+            1ULL << 48;
+
+        sim.squash_occupancy(state);
+
+        bool ok =
+            sim.attempt_move(
+                state,
+                48,
+                56,
+                PAWN,
+                QUEEN
+            );
+
+        require(
+            ok,
+            "Promotion move accepted"
+        );
+
+        require(
+            state.pieces[WHITE][QUEEN] &
+            (1ULL << 56),
+            "Promotion created queen"
+        );
+    }
+
+    // ========================================================
+    // TEST 18
+    // KING CANNOT MOVE INTO CHECK
+    // ========================================================
+
+    {
+        clear_board(state);
+
+        state.pieces[WHITE][KING] =
+            1ULL << 4;
+
+        state.pieces[BLACK][ROOK] =
+            1ULL << 60;
+
+        sim.squash_occupancy(state);
+
+        bool ok =
+            sim.attempt_move(
+                state,
+                4,
+                12,
+                KING
+            );
+
+        require(
+            !ok,
+            "King cannot move into check"
+        );
+    }
+
+    // ========================================================
+    // TEST COMPLETE
+    // ========================================================
+
+    std::cout
+        << "\n====================================\n"
+        << "ALL TESTS PASSED\n"
+        << "SYSTEM VALIDATED\n"
+        << "====================================\n";
+
     return 0;
 }

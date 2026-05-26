@@ -1,40 +1,10 @@
-/**
- * @file pomdp64.cpp
- * @brief Compact Bitboard Core for POMDP-64 (Rule Layer Extended)
- */
-
 #include "pomdp64.hpp"
 #include <iostream>
 
 namespace pomdp64 {
-    
-    void Simulator::reset_board(GameState& state) {
-
-    for (int c = 0; c < 2; ++c)
-        for (int p = 0; p < 6; ++p)
-            state.pieces[c][p] = 0ULL;
-
-    state.pieces[WHITE][PAWN]   = 0x000000000000FF00ULL;
-    state.pieces[WHITE][KNIGHT] = 0x0000000000000042ULL;
-    state.pieces[WHITE][BISHOP] = 0x0000000000000024ULL;
-    state.pieces[WHITE][ROOK]   = 0x0000000000000081ULL;
-    state.pieces[WHITE][QUEEN]  = 0x0000000000000008ULL;
-    state.pieces[WHITE][KING]   = 0x0000000000000010ULL;
-
-    state.pieces[BLACK][PAWN]   = 0x00FF000000000000ULL;
-    state.pieces[BLACK][KNIGHT] = 0x4200000000000000ULL;
-    state.pieces[BLACK][BISHOP] = 0x2400000000000000ULL;
-    state.pieces[BLACK][ROOK]   = 0x8100000000000000ULL;
-    state.pieces[BLACK][QUEEN]  = 0x0800000000000000ULL;
-    state.pieces[BLACK][KING]   = 0x1000000000000000ULL;
-
-    squash_occupancy(state);
-
-    state.metadata = 0ULL;
-}
 
 // ============================================================
-// CONSTRUCTOR
+// INIT
 // ============================================================
 
 Simulator::Simulator() {
@@ -43,7 +13,7 @@ Simulator::Simulator() {
 }
 
 // ============================================================
-// RAY INITIALIZATION
+// RAYS
 // ============================================================
 
 void Simulator::init_ray_masks() {
@@ -53,11 +23,8 @@ void Simulator::init_ray_masks() {
         int f = s & 7;
         int r = s >> 3;
 
-        ray_up[s] = ray_down[s] = 0ULL;
-        ray_left[s] = ray_right[s] = 0ULL;
-
-        ray_up_right[s] = ray_up_left[s] = 0ULL;
-        ray_down_right[s] = ray_down_left[s] = 0ULL;
+        ray_up[s] = ray_down[s] = ray_left[s] = ray_right[s] = 0ULL;
+        ray_ur[s] = ray_ul[s] = ray_dr[s] = ray_dl[s] = 0ULL;
 
         for (int rr = r + 1; rr < 8; ++rr)
             ray_up[s] |= 1ULL << (rr * 8 + f);
@@ -71,46 +38,34 @@ void Simulator::init_ray_masks() {
         for (int ff = f - 1; ff >= 0; --ff)
             ray_left[s] |= 1ULL << (r * 8 + ff);
 
-        for (int rr = r + 1, ff = f + 1;
-             rr < 8 && ff < 8;
-             ++rr, ++ff)
-            ray_up_right[s] |= 1ULL << (rr * 8 + ff);
+        for (int rr = r + 1, ff = f + 1; rr < 8 && ff < 8; ++rr, ++ff)
+            ray_ur[s] |= 1ULL << (rr * 8 + ff);
 
-        for (int rr = r + 1, ff = f - 1;
-             rr < 8 && ff >= 0;
-             ++rr, --ff)
-            ray_up_left[s] |= 1ULL << (rr * 8 + ff);
+        for (int rr = r + 1, ff = f - 1; rr < 8 && ff >= 0; ++rr, --ff)
+            ray_ul[s] |= 1ULL << (rr * 8 + ff);
 
-        for (int rr = r - 1, ff = f + 1;
-             rr >= 0 && ff < 8;
-             --rr, ++ff)
-            ray_down_right[s] |= 1ULL << (rr * 8 + ff);
+        for (int rr = r - 1, ff = f + 1; rr >= 0 && ff < 8; --rr, ++ff)
+            ray_dr[s] |= 1ULL << (rr * 8 + ff);
 
-        for (int rr = r - 1, ff = f - 1;
-             rr >= 0 && ff >= 0;
-             --rr, --ff)
-            ray_down_left[s] |= 1ULL << (rr * 8 + ff);
+        for (int rr = r - 1, ff = f - 1; rr >= 0 && ff >= 0; --rr, --ff)
+            ray_dl[s] |= 1ULL << (rr * 8 + ff);
     }
 }
 
 // ============================================================
-// ATTACK TABLES
+// ATTACKS
 // ============================================================
 
 void Simulator::init_attack_masks() {
 
-    constexpr int knight_delta[8][2] = {
-        { 2, 1}, { 2,-1},
-        {-2, 1}, {-2,-1},
-        { 1, 2}, { 1,-2},
-        {-1, 2}, {-1,-2}
+    static constexpr int N[8][2] = {
+        {2,1},{2,-1},{-2,1},{-2,-1},
+        {1,2},{1,-2},{-1,2},{-1,-2}
     };
 
-    constexpr int king_delta[8][2] = {
-        { 1, 0}, {-1, 0},
-        { 0, 1}, { 0,-1},
-        { 1, 1}, { 1,-1},
-        {-1, 1}, {-1,-1}
+    static constexpr int K[8][2] = {
+        {1,0},{-1,0},{0,1},{0,-1},
+        {1,1},{1,-1},{-1,1},{-1,-1}
     };
 
     for (int s = 0; s < 64; ++s) {
@@ -118,335 +73,219 @@ void Simulator::init_attack_masks() {
         knight_attacks[s] = 0ULL;
         king_attacks[s] = 0ULL;
 
-        int f = s & 7;
-        int r = s >> 3;
+        int f = s & 7, r = s >> 3;
 
-        for (auto &d : knight_delta) {
-            int nf = f + d[0];
-            int nr = r + d[1];
-            if (nf >= 0 && nf < 8 && nr >= 0 && nr < 8)
-                knight_attacks[s] |= 1ULL << (nr * 8 + nf);
+        for (auto &d : N) {
+            int nf = f + d[0], nr = r + d[1];
+            if (nf>=0 && nf<8 && nr>=0 && nr<8)
+                knight_attacks[s] |= 1ULL << (nr*8+nf);
         }
 
-        for (auto &d : king_delta) {
-            int nf = f + d[0];
-            int nr = r + d[1];
-            if (nf >= 0 && nf < 8 && nr >= 0 && nr < 8)
-                king_attacks[s] |= 1ULL << (nr * 8 + nf);
+        for (auto &d : K) {
+            int nf = f + d[0], nr = r + d[1];
+            if (nf>=0 && nf<8 && nr>=0 && nr<8)
+                king_attacks[s] |= 1ULL << (nr*8+nf);
         }
     }
 }
 
 // ============================================================
-// OCCUPANCY
+// BOARD
 // ============================================================
+
+void Simulator::reset_board(GameState& s) {
+
+    for (auto &c : s.pieces)
+        for (auto &p : c)
+            p = 0ULL;
+
+    s.pieces[WHITE][PAWN]   = 0xFF00ULL;
+    s.pieces[WHITE][KNIGHT] = 0x42ULL;
+    s.pieces[WHITE][BISHOP] = 0x24ULL;
+    s.pieces[WHITE][ROOK]   = 0x81ULL;
+    s.pieces[WHITE][QUEEN]  = 0x08ULL;
+    s.pieces[WHITE][KING]   = 0x10ULL;
+
+    s.pieces[BLACK][PAWN]   = 0xFF000000000000ULL;
+    s.pieces[BLACK][KNIGHT] = 0x4200000000000000ULL;
+    s.pieces[BLACK][BISHOP] = 0x2400000000000000ULL;
+    s.pieces[BLACK][ROOK]   = 0x8100000000000000ULL;
+    s.pieces[BLACK][QUEEN]  = 0x0800000000000000ULL;
+    s.pieces[BLACK][KING]   = 0x1000000000000000ULL;
+
+    squash_occupancy(s);
+    s.metadata = 0;
+}
 
 void Simulator::squash_occupancy(GameState& s) const {
 
-    s.white_occ =
-        s.pieces[WHITE][PAWN]   |
-        s.pieces[WHITE][KNIGHT] |
-        s.pieces[WHITE][BISHOP] |
-        s.pieces[WHITE][ROOK]   |
-        s.pieces[WHITE][QUEEN]  |
-        s.pieces[WHITE][KING];
+    s.white_occ = s.black_occ = s.total_occ = 0;
 
-    s.black_occ =
-        s.pieces[BLACK][PAWN]   |
-        s.pieces[BLACK][KNIGHT] |
-        s.pieces[BLACK][BISHOP] |
-        s.pieces[BLACK][ROOK]   |
-        s.pieces[BLACK][QUEEN]  |
-        s.pieces[BLACK][KING];
+    for (int p=0;p<6;++p) {
+        s.white_occ |= s.pieces[WHITE][p];
+        s.black_occ |= s.pieces[BLACK][p];
+    }
 
     s.total_occ = s.white_occ | s.black_occ;
 }
 
 // ============================================================
-// MOVE EXECUTION (LOW LEVEL)
+// ATTACK HELPERS
 // ============================================================
 
-void Simulator::make_move(
-    GameState& s,
-    int color,
-    int piece,
-    int from,
-    int to
-) {
-    s.pieces[color][piece] &= ~(1ULL << from);
+static inline uint64_t clip(uint64_t ray,uint64_t blockers,const uint64_t* t){
+    return blockers ? (ray ^ t[__builtin_ctzll(blockers)]) : ray;
+}
 
-    int enemy = color ^ 1;
-    uint64_t mask = ~(1ULL << to);
-
-    for (int p = 0; p < 6; ++p)
-        s.pieces[enemy][p] &= mask;
-
-    s.pieces[color][piece] |= (1ULL << to);
-
-    squash_occupancy(s);
-
-    s.metadata ^= Rules::MASK_COLOR;
+static inline uint64_t clip_r(uint64_t ray,uint64_t blockers,const uint64_t* t){
+    return blockers ? (ray ^ t[63-__builtin_clzll(blockers)]) : ray;
 }
 
 // ============================================================
-// ATTACK CHECKER
+// VISION
 // ============================================================
 
-bool Simulator::is_square_attacked(
-    const GameState& s,
-    int sq,
-    int attacker_color
-) const {
+uint64_t Simulator::get_rook_vision(int sq,uint64_t occ) const{
+    return clip(ray_up[sq],occ&ray_up[sq],ray_up)
+         | clip(ray_right[sq],occ&ray_right[sq],ray_right)
+         | clip_r(ray_down[sq],occ&ray_down[sq],ray_down)
+         | clip_r(ray_left[sq],occ&ray_left[sq],ray_left);
+}
 
-    if (s.pieces[attacker_color][KNIGHT] & knight_attacks[sq])
-        return true;
+uint64_t Simulator::get_bishop_vision(int sq,uint64_t occ) const{
+    return clip(ray_ur[sq],occ&ray_ur[sq],ray_ur)
+         | clip(ray_ul[sq],occ&ray_ul[sq],ray_ul)
+         | clip_r(ray_dr[sq],occ&ray_dr[sq],ray_dr)
+         | clip_r(ray_dl[sq],occ&ray_dl[sq],ray_dl);
+}
 
-    if (s.pieces[attacker_color][KING] & king_attacks[sq])
-        return true;
+uint64_t Simulator::get_queen_vision(int sq,uint64_t occ) const{
+    return get_rook_vision(sq,occ)|get_bishop_vision(sq,occ);
+}
 
-    uint64_t bishops = s.pieces[attacker_color][BISHOP] |
-                       s.pieces[attacker_color][QUEEN];
+// ============================================================
+// ATTACK CHECK
+// ============================================================
 
-    uint64_t rooks = s.pieces[attacker_color][ROOK] |
-                     s.pieces[attacker_color][QUEEN];
+bool Simulator::is_square_attacked(const GameState& s,int sq,int atk) const{
 
-    if (bishops) {
-        uint64_t vision = get_bishop_vision(sq, s.total_occ);
-        if (vision & bishops) return true;
-    }
+    if (s.pieces[atk][KNIGHT] & knight_attacks[sq]) return true;
+    if (s.pieces[atk][KING] & king_attacks[sq]) return true;
 
-    if (rooks) {
-        uint64_t vision = get_rook_vision(sq, s.total_occ);
-        if (vision & rooks) return true;
-    }
+    uint64_t bishops = s.pieces[atk][BISHOP] | s.pieces[atk][QUEEN];
+    uint64_t rooks   = s.pieces[atk][ROOK]   | s.pieces[atk][QUEEN];
 
-    uint64_t pawns = s.pieces[attacker_color][PAWN];
-
-    if (attacker_color == WHITE) {
-        if ((pawns << 7) & s.black_occ & NOT_FILE_H & (1ULL << sq)) return true;
-        if ((pawns << 9) & s.black_occ & NOT_FILE_A & (1ULL << sq)) return true;
-    } else {
-        if ((pawns >> 7) & s.white_occ & NOT_FILE_A & (1ULL << sq)) return true;
-        if ((pawns >> 9) & s.white_occ & NOT_FILE_H & (1ULL << sq)) return true;
-    }
+    if (bishops && (get_bishop_vision(sq,s.total_occ)&bishops)) return true;
+    if (rooks   && (get_rook_vision(sq,s.total_occ)&rooks)) return true;
 
     return false;
 }
 
+bool Simulator::is_in_check(const GameState& s,int color) const{
+    int ksq = __builtin_ctzll(s.pieces[color][KING]);
+    return is_square_attacked(s,ksq,color^1);
+}
+
 // ============================================================
-// TRANSACTIONAL MOVE ENGINE
+// PIN DETECTION
 // ============================================================
 
-bool Simulator::attempt_move(
-    GameState& s,
-    int from,
-    int to,
-    int promotion_type
-) {
-    GameState backup = s;
+uint64_t Simulator::get_pinned_pieces(const GameState& s,int color) const{
 
-    apply_move(s, from, to, promotion_type);
+    uint64_t pinned = 0;
+    int king = __builtin_ctzll(s.pieces[color][KING]);
+    uint64_t occ = s.total_occ;
 
-    int king_sq = __builtin_ctzll(
-        s.pieces[s.metadata & Rules::MASK_COLOR ? BLACK : WHITE][KING]
-    );
+    uint64_t rays[8] = {
+        ray_up[king],ray_down[king],
+        ray_left[king],ray_right[king],
+        ray_ur[king],ray_ul[king],
+        ray_dr[king],ray_dl[king]
+    };
 
-    int attacker = (s.metadata & Rules::MASK_COLOR) ? WHITE : BLACK;
+    for (auto r : rays) {
+        uint64_t b = r & occ;
+        if (!b) continue;
 
-    if (is_square_attacked(s, king_sq, attacker)) {
-        s = backup;
-        return false;
+        int first = __builtin_ctzll(b);
+        uint64_t sq = 1ULL << first;
+
+        uint64_t friendly = s.white_occ | s.black_occ;
+        if (!(sq & friendly)) continue;
+
+        pinned |= sq;
     }
 
-    s.metadata ^= Rules::MASK_COLOR;
-    return true;
+    return pinned;
 }
 
 // ============================================================
-// RULE-AWARE MOVE APPLICATION
+// LEGAL MASK
 // ============================================================
 
-void Simulator::apply_move(
-    GameState& s,
-    int from,
-    int to,
-    int promotion_type
-) {
-    int color = (s.metadata & Rules::MASK_COLOR) ? BLACK : WHITE;
-    int enemy = color ^ 1;
+uint64_t Simulator::legal_mask_from_pins(const GameState& s,int color,int from) const{
 
-    int piece = -1;
+    uint64_t pinned = get_pinned_pieces(s,color);
 
-    for (int p = 0; p < 6; ++p) {
-        if (s.pieces[color][p] & (1ULL << from)) {
-            piece = p;
-            break;
-        }
-    }
+    if (!(pinned & (1ULL<<from)))
+        return ~0ULL;
 
-    if (piece == -1) return;
+    int king = __builtin_ctzll(s.pieces[color][KING]);
 
-    // EN PASSANT
-    if (piece == PAWN && (s.metadata & Rules::MASK_EP_FILE)) {
-        int ep_file = (s.metadata & Rules::MASK_EP_FILE) >> 4;
-        int ep_sq = (color == WHITE) ? to - 8 : to + 8;
+    uint64_t line =
+        ray_up[king]|ray_down[king]|
+        ray_left[king]|ray_right[king]|
+        ray_ur[king]|ray_ul[king]|
+        ray_dr[king]|ray_dl[king];
 
-        if ((to & 7) == ep_file && !(s.pieces[enemy][PAWN] & (1ULL << to))) {
-            s.pieces[enemy][PAWN] &= ~(1ULL << ep_sq);
-        }
-    }
-
-    // CASTLING (rook move)
-    if (piece == KING && abs(from - to) == 2) {
-        if (to == 6) {
-            s.pieces[color][ROOK] &= ~(1ULL << 7);
-            s.pieces[color][ROOK] |= (1ULL << 5);
-        } else if (to == 2) {
-            s.pieces[color][ROOK] &= ~(1ULL << 0);
-            s.pieces[color][ROOK] |= (1ULL << 3);
-        } else if (to == 62) {
-            s.pieces[color][ROOK] &= ~(1ULL << 63);
-            s.pieces[color][ROOK] |= (1ULL << 61);
-        } else if (to == 58) {
-            s.pieces[color][ROOK] &= ~(1ULL << 56);
-            s.pieces[color][ROOK] |= (1ULL << 59);
-        }
-    }
-
-    // NORMAL MOVE
-    s.pieces[color][piece] &= ~(1ULL << from);
-
-    for (int p = 0; p < 6; ++p)
-        s.pieces[enemy][p] &= ~(1ULL << to);
-
-    // PROMOTION
-    if (piece == PAWN && (to / 8 == 0 || to / 8 == 7)) {
-        s.pieces[color][promotion_type] |= (1ULL << to);
-    } else {
-        s.pieces[color][piece] |= (1ULL << to);
-    }
-
-    squash_occupancy(s);
+    return line;
 }
 
 // ============================================================
-// SLIDING ATTACKS
+// MOVE GENERATION (FINAL INTEGRATED)
 // ============================================================
 
-static inline uint64_t clip_positive(
-    uint64_t ray,
-    uint64_t blockers,
-    const uint64_t* table
-) {
-    return blockers ? (ray ^ table[__builtin_ctzll(blockers)]) : ray;
-}
+int Simulator::generate_pseudo_moves(const GameState& s,int color,Move* out){
 
-static inline uint64_t clip_negative(
-    uint64_t ray,
-    uint64_t blockers,
-    const uint64_t* table
-) {
-    return blockers ? (ray ^ table[63 - __builtin_clzll(blockers)]) : ray;
-}
+    int count=0;
 
-// ============================================================
-// ROOK / BISHOP / QUEEN
-// ============================================================
+    uint64_t friendly = (color==WHITE)?s.white_occ:s.black_occ;
 
-uint64_t Simulator::get_rook_vision(int sq, uint64_t occ) const {
-    return clip_positive(ray_up[sq], occ & ray_up[sq], ray_up)
-         | clip_positive(ray_right[sq], occ & ray_right[sq], ray_right)
-         | clip_negative(ray_down[sq], occ & ray_down[sq], ray_down)
-         | clip_negative(ray_left[sq], occ & ray_left[sq], ray_left);
-}
+    uint64_t pinned = get_pinned_pieces(s,color);
 
-uint64_t Simulator::get_bishop_vision(int sq, uint64_t occ) const {
-    return clip_positive(ray_up_right[sq], occ & ray_up_right[sq], ray_up_right)
-         | clip_positive(ray_up_left[sq], occ & ray_up_left[sq], ray_up_left)
-         | clip_negative(ray_down_right[sq], occ & ray_down_right[sq], ray_down_right)
-         | clip_negative(ray_down_left[sq], occ & ray_down_left[sq], ray_down_left);
-}
+    for(int p=PAWN;p<=KING;++p){
 
-// ============================================================
-// MOVE GENERATION (UNCHANGED CORE)
-// ============================================================
+        uint64_t bb=s.pieces[color][p];
 
-int Simulator::generate_pseudo_moves(
-    const GameState& s,
-    int color,
-    Move* out
-) {
-    int count = 0;
+        while(bb){
 
-    uint64_t friendly = (color == WHITE) ? s.white_occ : s.black_occ;
-    uint64_t enemy = (color == WHITE) ? s.black_occ : s.white_occ;
-    uint64_t valid = ~friendly;
+            int from=__builtin_ctzll(bb);
+            bb&=bb-1;
 
-    for (int piece = KNIGHT; piece <= KING; ++piece) {
+            uint64_t pin_mask =
+                (pinned & (1ULL<<from))
+                ? legal_mask_from_pins(s,color,from)
+                : ~friendly;
 
-        uint64_t bb = s.pieces[color][piece];
+            uint64_t att=0;
 
-        while (bb) {
-            int from = __builtin_ctzll(bb);
-            uint64_t attacks = 0;
+            if(p==KNIGHT) att=knight_attacks[from];
+            else if(p==KING) att=king_attacks[from];
+            else if(p==BISHOP) att=get_bishop_vision(from,s.total_occ);
+            else if(p==ROOK) att=get_rook_vision(from,s.total_occ);
+            else if(p==QUEEN) att=get_queen_vision(from,s.total_occ);
+            else if(p==PAWN) att=0;
 
-            switch (piece) {
-                case KNIGHT: attacks = knight_attacks[from]; break;
-                case BISHOP: attacks = get_bishop_vision(from, s.total_occ); break;
-                case ROOK:   attacks = get_rook_vision(from, s.total_occ); break;
-                case QUEEN:  attacks = get_rook_vision(from, s.total_occ) |
-                                        get_bishop_vision(from, s.total_occ); break;
-                case KING:   attacks = king_attacks[from]; break;
+            att &= pin_mask;
+
+            while(att){
+
+                int to=__builtin_ctzll(att);
+                att&=att-1;
+
+                out[count++]={(uint8_t)from,(uint8_t)to,(uint8_t)p,0};
             }
-
-            attacks &= valid;
-
-            while (attacks) {
-                int to = __builtin_ctzll(attacks);
-                out[count++] = {(uint8_t)from,(uint8_t)to,(uint8_t)piece,0};
-                attacks &= attacks - 1;
-            }
-
-            bb &= bb - 1;
         }
-    }
-
-    uint64_t pawns = s.pieces[color][PAWN];
-
-    if (color == WHITE) {
-        uint64_t push1 = (pawns << 8) & ~s.total_occ;
-        uint64_t push2 = ((push1 & RANK_3) << 8) & ~s.total_occ;
-        uint64_t capL = (pawns << 7) & NOT_FILE_H & enemy;
-        uint64_t capR = (pawns << 9) & NOT_FILE_A & enemy;
-
-        while (push1) { int to = __builtin_ctzll(push1);
-            out[count++] = {(uint8_t)(to-8),(uint8_t)to,PAWN,0}; push1 &= push1-1; }
-
-        while (push2) { int to = __builtin_ctzll(push2);
-            out[count++] = {(uint8_t)(to-16),(uint8_t)to,PAWN,0}; push2 &= push2-1; }
-
-        while (capL) { int to = __builtin_ctzll(capL);
-            out[count++] = {(uint8_t)(to-7),(uint8_t)to,PAWN,0}; capL &= capL-1; }
-
-        while (capR) { int to = __builtin_ctzll(capR);
-            out[count++] = {(uint8_t)(to-9),(uint8_t)to,PAWN,0}; capR &= capR-1; }
-    } else {
-        uint64_t push1 = (pawns >> 8) & ~s.total_occ;
-        uint64_t push2 = ((push1 & RANK_6) >> 8) & ~s.total_occ;
-        uint64_t capL = (pawns >> 9) & NOT_FILE_H & enemy;
-        uint64_t capR = (pawns >> 7) & NOT_FILE_A & enemy;
-
-        while (push1) { int to = __builtin_ctzll(push1);
-            out[count++] = {(uint8_t)(to+8),(uint8_t)to,PAWN,0}; push1 &= push1-1; }
-
-        while (push2) { int to = __builtin_ctzll(push2);
-            out[count++] = {(uint8_t)(to+16),(uint8_t)to,PAWN,0}; push2 &= push2-1; }
-
-        while (capL) { int to = __builtin_ctzll(capL);
-            out[count++] = {(uint8_t)(to+9),(uint8_t)to,PAWN,0}; capL &= capL-1; }
-
-        while (capR) { int to = __builtin_ctzll(capR);
-            out[count++] = {(uint8_t)(to+7),(uint8_t)to,PAWN,0}; capR &= capR-1; }
     }
 
     return count;
@@ -456,57 +295,41 @@ int Simulator::generate_pseudo_moves(
 // VISIBILITY
 // ============================================================
 
-uint64_t Simulator::get_visibility_mask(
-    const GameState& s,
-    int color
-) const {
-    uint64_t vis = (color == WHITE) ? s.white_occ : s.black_occ;
+uint64_t Simulator::get_visibility_mask(const GameState& s,int color) const{
 
-    for (int piece = PAWN; piece <= KING; ++piece) {
-        uint64_t bb = s.pieces[color][piece];
+    uint64_t v=(color==WHITE)?s.white_occ:s.black_occ;
 
-        while (bb) {
-            int sq = __builtin_ctzll(bb);
+    for(int p=PAWN;p<=KING;++p){
 
-            switch (piece) {
-                case PAWN:
-                    vis |= knight_attacks[sq]; // simplified pawn influence kept safe
-                    break;
-                case KNIGHT: vis |= knight_attacks[sq]; break;
-                case BISHOP: vis |= get_bishop_vision(sq, s.total_occ); break;
-                case ROOK:   vis |= get_rook_vision(sq, s.total_occ); break;
-                case QUEEN:  vis |= get_rook_vision(sq, s.total_occ) |
-                                    get_bishop_vision(sq, s.total_occ); break;
-                case KING:   vis |= king_attacks[sq]; break;
-            }
+        uint64_t bb=s.pieces[color][p];
 
-            bb &= bb - 1;
+        while(bb){
+
+            int sq=__builtin_ctzll(bb);
+            bb&=bb-1;
+
+            if(p==KNIGHT) v|=knight_attacks[sq];
+            else if(p==KING) v|=king_attacks[sq];
+            else if(p==BISHOP) v|=get_bishop_vision(sq,s.total_occ);
+            else if(p==ROOK) v|=get_rook_vision(sq,s.total_occ);
+            else if(p==QUEEN) v|=get_queen_vision(sq,s.total_occ);
         }
     }
 
-    return vis;
+    return v;
 }
 
 // ============================================================
-// DEBUG
+// PRINT
 // ============================================================
 
-void Simulator::print_bitboard(uint64_t bb) const {
+void Simulator::print_bitboard(uint64_t bb) const{
 
-    std::cout << "\n";
-
-    for (int r = 7; r >= 0; --r) {
-        std::cout << r + 1 << "  ";
-
-        for (int f = 0; f < 8; ++f) {
-            int sq = r * 8 + f;
-            std::cout << ((bb >> sq) & 1ULL) << " ";
-        }
-
-        std::cout << "\n";
+    for(int r=7;r>=0;--r){
+        for(int f=0;f<8;++f)
+            std::cout<<((bb>>(r*8+f))&1)<<" ";
+        std::cout<<"\n";
     }
-
-    std::cout << "   a b c d e f g h\n\n";
 }
 
 } // namespace pomdp64

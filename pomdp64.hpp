@@ -1,7 +1,7 @@
 /**
  * @file pomdp64.hpp
  * @brief POMDP-64 Master Interface
- * @version 2.0.0
+ * @version 2.1.0 (Rule Layer Extension)
  */
 
 #ifndef POMDP64_HPP
@@ -30,20 +30,45 @@ constexpr int QUEEN  = 4;
 constexpr int KING   = 5;
 
 // ============================================================
-// GAME STATE
-// EXACTLY 128 BYTES
+// MOVE FLAGS (EXTENSION LAYER)
+// ============================================================
+
+namespace MoveFlag {
+    constexpr uint8_t QUIET       = 0;
+    constexpr uint8_t CAPTURE     = 1;
+    constexpr uint8_t DOUBLE_PUSH = 2;
+    constexpr uint8_t EN_PASSANT  = 3;
+    constexpr uint8_t CASTLE      = 4;
+    constexpr uint8_t PROMOTION   = 5;
+}
+
+// ============================================================
+// RULE METADATA (BIT PACKING)
+// ============================================================
+
+namespace Rules {
+    constexpr uint64_t MASK_CASTLE_WK = 1ULL << 0;
+    constexpr uint64_t MASK_CASTLE_WQ = 1ULL << 1;
+    constexpr uint64_t MASK_CASTLE_BK = 1ULL << 2;
+    constexpr uint64_t MASK_CASTLE_BQ = 1ULL << 3;
+
+    constexpr uint64_t MASK_EP_FILE   = 0x7ULL << 4; // 3-bit file encoding
+    constexpr uint64_t MASK_COLOR     = 1ULL << 7;
+}
+
+// ============================================================
+// GAME STATE (128 BYTES EXACT)
 // ============================================================
 
 struct alignas(64) GameState {
 
-    // 96 bytes
-    uint64_t pieces[2][6];
+    uint64_t pieces[2][6];   // 96 bytes
 
-    // 32 bytes
     uint64_t white_occ;
     uint64_t black_occ;
     uint64_t total_occ;
-    uint64_t metadata;
+
+    uint64_t metadata;       // rule + turn + ep + castling
 };
 
 static_assert(sizeof(GameState) == 128,
@@ -54,7 +79,6 @@ static_assert(sizeof(GameState) == 128,
 // ============================================================
 
 struct Move {
-
     uint8_t from;
     uint8_t to;
     uint8_t piece;
@@ -70,7 +94,7 @@ class Simulator {
 private:
 
     // ========================================================
-    // SLIDING RAYS
+    // RAY TABLES
     // ========================================================
 
     uint64_t ray_up[64];
@@ -91,7 +115,7 @@ private:
     uint64_t king_attacks[64];
 
     // ========================================================
-    // INITIALIZATION
+    // INTERNAL INIT
     // ========================================================
 
     void init_ray_masks();
@@ -103,43 +127,30 @@ public:
     // FILE MASKS
     // ========================================================
 
-    static constexpr uint64_t FILE_A =
-        0x0101010101010101ULL;
+    static constexpr uint64_t FILE_A = 0x0101010101010101ULL;
+    static constexpr uint64_t FILE_H = 0x8080808080808080ULL;
 
-    static constexpr uint64_t FILE_H =
-        0x8080808080808080ULL;
-
-    static constexpr uint64_t NOT_FILE_A =
-        ~FILE_A;
-
-    static constexpr uint64_t NOT_FILE_H =
-        ~FILE_H;
+    static constexpr uint64_t NOT_FILE_A = ~FILE_A;
+    static constexpr uint64_t NOT_FILE_H = ~FILE_H;
 
     // ========================================================
     // RANK MASKS
     // ========================================================
 
-    static constexpr uint64_t RANK_2 =
-        0x000000000000FF00ULL;
-
-    static constexpr uint64_t RANK_3 =
-        0x0000000000FF0000ULL;
-
-    static constexpr uint64_t RANK_6 =
-        0x0000FF0000000000ULL;
-
-    static constexpr uint64_t RANK_7 =
-        0x00FF000000000000ULL;
+    static constexpr uint64_t RANK_2 = 0x000000000000FF00ULL;
+    static constexpr uint64_t RANK_3 = 0x0000000000FF0000ULL;
+    static constexpr uint64_t RANK_6 = 0x0000FF0000000000ULL;
+    static constexpr uint64_t RANK_7 = 0x00FF000000000000ULL;
 
     // ========================================================
-    // CONSTRUCTION
+    // LIFECYCLE
     // ========================================================
 
     Simulator();
     ~Simulator() = default;
 
     // ========================================================
-    // BOARD MANAGEMENT
+    // STATE CORE
     // ========================================================
 
     void reset_board(GameState& state);
@@ -153,6 +164,34 @@ public:
         int source_square,
         int target_square
     );
+
+    // ========================================================
+    // TRANSACTIONAL MOVE ENGINE (NEW)
+    // ========================================================
+
+    bool attempt_move(
+        GameState& state,
+        int from,
+        int to,
+        int promotion_type = 0
+    );
+
+    void apply_move(
+        GameState& state,
+        int from,
+        int to,
+        int promotion_type
+    );
+
+    // ========================================================
+    // LEGALITY VALIDATION (NEW)
+    // ========================================================
+
+    bool is_square_attacked(
+        const GameState& state,
+        int square,
+        int attacker_color
+    ) const;
 
     // ========================================================
     // SLIDING ATTACKS
@@ -172,27 +211,19 @@ public:
         int square,
         uint64_t occupancy
     ) const {
-
-        return
-            get_rook_vision(square, occupancy) |
-            get_bishop_vision(square, occupancy);
+        return get_rook_vision(square, occupancy)
+             | get_bishop_vision(square, occupancy);
     }
 
     // ========================================================
     // STEP ATTACKS
     // ========================================================
 
-    inline uint64_t get_knight_attacks(
-        int square
-    ) const {
-
+    inline uint64_t get_knight_attacks(int square) const {
         return knight_attacks[square];
     }
 
-    inline uint64_t get_king_attacks(
-        int square
-    ) const {
-
+    inline uint64_t get_king_attacks(int square) const {
         return king_attacks[square];
     }
 
@@ -219,9 +250,7 @@ public:
     // DEBUG
     // ========================================================
 
-    void print_bitboard(
-        uint64_t bitboard
-    ) const;
+    void print_bitboard(uint64_t bitboard) const;
 };
 
 } // namespace pomdp64

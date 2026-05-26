@@ -1,14 +1,14 @@
 /**
  * @file main.cpp
- * @brief POMDP-64 Verification Bench
+ * @brief POMDP-64 Verification Bench (Rule-Layer Test Suite)
  */
 
 #include "pomdp64.hpp"
 #include <iostream>
 
-int main() {
+using namespace pomdp64;
 
-    using namespace pomdp64;
+int main() {
 
     Simulator sim;
     GameState state;
@@ -16,104 +16,112 @@ int main() {
     sim.reset_board(state);
 
     std::cout << "=====================================\n";
-    std::cout << "POMDP-64 :: MARKOVIAN VOID PROTOCOL\n";
+    std::cout << "POMDP-64 :: RULE LAYER VERIFICATION\n";
     std::cout << "=====================================\n\n";
 
-    // =====================================================
-    // STRUCTURE VALIDATION
-    // =====================================================
+    // =========================================================
+    // STRUCTURE CHECK
+    // =========================================================
 
-    std::cout
-        << "[STRUCT] GameState Size : "
-        << sizeof(GameState)
-        << " bytes\n";
+    std::cout << "[STRUCT] GameState size: "
+              << sizeof(GameState)
+              << " bytes\n\n";
 
-    // =====================================================
+    // =========================================================
     // INITIAL MOVE GENERATION
-    // =====================================================
+    // =========================================================
 
-    Move buffer[256];
+    Move buffer[512];
 
-    int white_moves =
-        sim.generate_pseudo_moves(
-            state,
-            WHITE,
-            buffer
-        );
+    int white_moves = sim.generate_pseudo_moves(state, WHITE, buffer);
+    int black_moves = sim.generate_pseudo_moves(state, BLACK, buffer);
 
-    int black_moves =
-        sim.generate_pseudo_moves(
-            state,
-            BLACK,
-            buffer
-        );
+    std::cout << "[MOVES] White pseudo-legal: " << white_moves << "\n";
+    std::cout << "[MOVES] Black pseudo-legal: " << black_moves << "\n\n";
 
-    std::cout
-        << "[MOVES] White Initial Moves : "
-        << white_moves
-        << "\n";
+    // =========================================================
+    // ATTACK VALIDATION
+    // =========================================================
 
-    std::cout
-        << "[MOVES] Black Initial Moves : "
-        << black_moves
-        << "\n";
+    int white_king_sq = __builtin_ctzll(state.pieces[WHITE][KING]);
+    int black_king_sq = __builtin_ctzll(state.pieces[BLACK][KING]);
 
-    // =====================================================
+    bool white_in_check = sim.is_square_attacked(state, white_king_sq, BLACK);
+    bool black_in_check = sim.is_square_attacked(state, black_king_sq, WHITE);
+
+    std::cout << "[ATTACK] White king in check: " << white_in_check << "\n";
+    std::cout << "[ATTACK] Black king in check: " << black_in_check << "\n\n";
+
+    // =========================================================
     // VISIBILITY TEST
-    // =====================================================
+    // =========================================================
 
-    uint64_t white_visibility =
-        sim.get_visibility_mask(
-            state,
-            WHITE
-        );
+    uint64_t white_vis = sim.get_visibility_mask(state, WHITE);
 
-    std::cout
-        << "\n[VISIBILITY] White Sight Mask\n";
+    std::cout << "[VISIBILITY] White mask:\n";
+    sim.print_bitboard(white_vis);
 
-    sim.print_bitboard(white_visibility);
+    // =========================================================
+    // SLIDING ATTACK TEST
+    // =========================================================
 
-    // =====================================================
-    // ROOK VISION TEST
-    // =====================================================
+    uint64_t rook_vis = sim.get_rook_vision(0, state.total_occ);
 
-    uint64_t rook_vision =
-        sim.get_rook_vision(
-            0,
-            state.total_occ
-        );
+    std::cout << "[VISION] Rook from a1:\n";
+    sim.print_bitboard(rook_vis);
 
-    std::cout
-        << "[VISION] White Rook a1\n";
+    // =========================================================
+    // TRANSACTIONAL MOVE TEST (LEGAL MOVE)
+    // =========================================================
 
-    sim.print_bitboard(rook_vision);
+    bool move1 = sim.attempt_move(state, 12, 28); // e2 -> e4
 
-    // =====================================================
-    // MOVE EXECUTION TEST
-    // =====================================================
+    std::cout << "[MOVE] e2 -> e4 result: "
+              << (move1 ? "LEGAL" : "ILLEGAL")
+              << "\n";
 
-    sim.make_move(
-        state,
-        WHITE,
-        PAWN,
-        12,
-        28
-    );
+    // =========================================================
+    // TRANSACTIONAL MOVE TEST (ILLEGAL SELF-CHECK SCENARIO)
+    // =========================================================
 
-    std::cout
-        << "[MOVE] Executed e2 -> e4\n";
+    GameState before_illegal = state;
 
-    std::cout
-        << "[OCCUPANCY] Total Occupancy\n";
+    // try something likely illegal early (king move into pawn shield)
+    bool move2 = sim.attempt_move(state, 4, 12);
 
+    std::cout << "[MOVE] e1 -> e2 result: "
+              << (move2 ? "LEGAL" : "ILLEGAL (ROLLED BACK)")
+              << "\n\n";
+
+    // =========================================================
+    // OCCUPANCY CHECK
+    // =========================================================
+
+    std::cout << "[OCCUPANCY] Total board state:\n";
     sim.print_bitboard(state.total_occ);
 
-    // =====================================================
-    // TERMINATION
-    // =====================================================
+    std::cout << "\n[OCCUPANCY] White occupancy:\n";
+    sim.print_bitboard(state.white_occ);
 
-    std::cout
-        << "[STATUS] Diagnostics Completed.\n";
+    std::cout << "\n[OCCUPANCY] Black occupancy:\n";
+    sim.print_bitboard(state.black_occ);
+
+    // =========================================================
+    // CONSISTENCY CHECK
+    // =========================================================
+
+    uint64_t recomputed =
+        state.white_occ | state.black_occ;
+
+    std::cout << "\n[CONSISTENCY] occupancy match: "
+              << (recomputed == state.total_occ)
+              << "\n";
+
+    // =========================================================
+    // FINAL STATUS
+    // =========================================================
+
+    std::cout << "\n[STATUS] Rule-layer verification complete.\n";
 
     return 0;
 }

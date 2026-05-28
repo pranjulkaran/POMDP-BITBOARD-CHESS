@@ -120,12 +120,8 @@ void init_attack_masks();
 
 void apply_move(
     GameState& s,
-    int from,
-    int to,
-    int piece,
-    int promotion = QUEEN
+    const Move& move
 );
-
 public:
 
 // ========================================================
@@ -191,10 +187,7 @@ void make_move(
 
 bool attempt_move(
     GameState& s,
-    int from,
-    int to,
-    int piece,
-    int promotion = QUEEN
+    const Move& move
 );
 
 // ========================================================

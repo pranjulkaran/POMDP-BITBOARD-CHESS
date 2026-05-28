@@ -244,18 +244,18 @@ int to
 ) {
 
 s.pieces[color][piece] &=
-    ~(1ULL << from);
+~(1ULL << from);
 
 int enemy = color ^ 1;
 
 uint64_t clear_mask =
-    ~(1ULL << to);
+~(1ULL << to);
 
 for (int p = 0; p < 6; ++p)
-    s.pieces[enemy][p] &= clear_mask;
+s.pieces[enemy][p] &= clear_mask;
 
 s.pieces[color][piece] |=
-    (1ULL << to);
+(1ULL << to);
 
 squash_occupancy(s);
 
@@ -268,48 +268,58 @@ s.metadata ^= 1ULL;
 // ============================================================
 
 void Simulator::apply_move(
-GameState& s,
-int from,
-int to,
-int piece,
-int promotion
+    GameState& s,
+    const Move& move
 ) {
 
-int color =
-    (s.metadata & 1ULL)
-    ? BLACK
-    : WHITE;
+    int color =
+        (s.metadata & 1ULL)
+        ? BLACK
+        : WHITE;
 
-int enemy = color ^ 1;
+    int enemy = color ^ 1;
 
-s.pieces[color][piece] &=
-    ~(1ULL << from);
+    s.pieces[color][move.piece] &=
+        ~(1ULL << move.from);
 
-for (int p = 0; p < 6; ++p)
-    s.pieces[enemy][p] &=
-        ~(1ULL << to);
+    for (int p = 0; p < 6; ++p)
+        s.pieces[enemy][p] &=
+            ~(1ULL << move.to);
 
-// PROMOTION
-if (piece == PAWN) {
+    // PROMOTION
+    if (move.flag >= MOVE_PROMOTE_KNIGHT) {
 
-    if ((color == WHITE && to >= 56) ||
-        (color == BLACK && to <= 7)) {
+        int promotion_piece = QUEEN;
 
-        s.pieces[color][promotion] |=
-            (1ULL << to);
+        switch (move.flag) {
+
+            case MOVE_PROMOTE_KNIGHT:
+                promotion_piece = KNIGHT;
+                break;
+
+            case MOVE_PROMOTE_BISHOP:
+                promotion_piece = BISHOP;
+                break;
+
+            case MOVE_PROMOTE_ROOK:
+                promotion_piece = ROOK;
+                break;
+
+            case MOVE_PROMOTE_QUEEN:
+                promotion_piece = QUEEN;
+                break;
+        }
+
+        s.pieces[color][promotion_piece] |=
+            (1ULL << move.to);
     }
     else {
-        s.pieces[color][PAWN] |=
-            (1ULL << to);
+
+        s.pieces[color][move.piece] |=
+            (1ULL << move.to);
     }
-}
-else {
 
-    s.pieces[color][piece] |=
-        (1ULL << to);
-}
-
-squash_occupancy(s);
+    squash_occupancy(s);
 
 }
 
@@ -318,39 +328,34 @@ squash_occupancy(s);
 // ============================================================
 
 bool Simulator::attempt_move(
-GameState& s,
-int from,
-int to,
-int piece,
-int promotion
+    GameState& s,
+    const Move& move
 ) {
 
-GameState backup = s;
+    GameState backup = s;
 
-int moving_color =
-    (s.metadata & 1ULL)
-    ? BLACK
-    : WHITE;
+    int moving_color =
+        (s.metadata & 1ULL)
+        ? BLACK
+        : WHITE;
 
-apply_move(
-    s,
-    from,
-    to,
-    piece,
-    promotion
-);
+    apply_move(
+        s,
+        move
+    );
 
-if (is_in_check(s, moving_color)) {
+    if (is_in_check(s, moving_color)) {
 
-    s = backup;
-    return false;
-}
+        s = backup;
+        return false;
+    }
 
-s.metadata ^= 1ULL;
+    s.metadata ^= 1ULL;
 
-return true;
+    return true;
 
 }
+
 
 // ============================================================
 // SLIDING HELPERS

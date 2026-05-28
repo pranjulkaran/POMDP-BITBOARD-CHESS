@@ -368,13 +368,18 @@ require(
 
     sim.squash_occupancy(state);
 
+    Move move = {
+    12,
+    13,
+    ROOK,
+    MOVE_QUIET
+    };
+
     bool ok =
-        sim.attempt_move(
-            state,
-            12,
-            13,
-            ROOK
-        );
+    sim.attempt_move(
+        state,
+        move
+    );
 
     require(
         !ok,
@@ -407,13 +412,18 @@ require(
 
     sim.squash_occupancy(state);
 
+    Move move = {
+    12,
+    20,
+    ROOK,
+    MOVE_QUIET
+    };
+
     bool ok =
-        sim.attempt_move(
-            state,
-            12,
-            20,
-            ROOK
-        );
+    sim.attempt_move(
+        state,
+        move
+    );
 
     require(
         ok,
@@ -580,14 +590,18 @@ require(
 
     sim.squash_occupancy(state);
 
+    Move move = {
+    48,
+    56,
+    PAWN,
+    MOVE_PROMOTE_QUEEN
+    };
+
     bool ok =
-        sim.attempt_move(
-            state,
-            48,
-            56,
-            PAWN,
-            QUEEN
-        );
+    sim.attempt_move(
+        state,
+        move
+    );
 
     require(
         ok,
@@ -617,13 +631,18 @@ require(
 
     sim.squash_occupancy(state);
 
+    Move move = {
+    4,
+    12,
+    KING,
+    MOVE_QUIET
+    };
+
     bool ok =
-        sim.attempt_move(
-            state,
-            4,
-            12,
-            KING
-        );
+    sim.attempt_move(
+        state,
+        move
+    );
 
     require(
         !ok,
